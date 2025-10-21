@@ -19,6 +19,8 @@ class CustomBuildExtension(BuildExtension):
         for ext in self.extensions:
             if isinstance(ext.extra_compile_args, dict):
                 ext.extra_compile_args.setdefault("cxx", [])
+                if USING_ROCM:
+                    ext.extra_compile_args.setdefault("hipcc", [])
                 ext.extra_compile_args.setdefault("nvcc", [])
         super().build_extensions()
         if USING_ROCM and IS_WINDOWS:
@@ -49,9 +51,12 @@ class CustomBuildExtension(BuildExtension):
 class HIPExtension(CUDAExtension):
     def __init__(self, *args, **kwargs):
         extra_compile_args = kwargs.get("extra_compile_args", {})
-        if "hipcc" in extra_compile_args:
-            hipcc_args = extra_compile_args.pop("hipcc")
-            extra_compile_args.setdefault("nvcc", []).extend(hipcc_args)
+        hipcc_args = extra_compile_args.get("hipcc")
+        if hipcc_args is not None:
+            hipcc_args = list(hipcc_args)
+            extra_compile_args["hipcc"] = hipcc_args
+            extra_compile_args.setdefault("nvcc", [])
+            extra_compile_args["nvcc"].extend(hipcc_args)
             kwargs["extra_compile_args"] = extra_compile_args
         super().__init__(*args, **kwargs)
 
@@ -136,6 +141,14 @@ HIP_RUNTIME_DLLS = [
     "hiprtc-builtins.dll",
 ]
 
+HIP_LIBRARIES = [
+    "amdhip64",
+    "hiprtc",
+    "hipfft",
+    "rocblas",
+    "hipblas",
+]
+
 
 def format_define(symbol: str) -> str:
     return f"/D{symbol}" if IS_WINDOWS else f"-D{symbol}"
@@ -157,6 +170,8 @@ def host_compile_flags(debug_enabled: bool) -> list[str]:
         flags.extend(["-O0", "-g"] if debug_enabled else ["-O3"])
     flags.append(format_undef("NDEBUG"))
     flags.extend(format_define(d) for d in defines)
+    if USING_ROCM:
+        flags.append(format_define("NUNCHAKU_USE_HIP"))
     return flags
 
 
@@ -185,6 +200,7 @@ def hip_device_flags(debug_enabled: bool) -> list[str]:
     flags = [
         "-DENABLE_BF16=1",
         "-DBUILD_NUNCHAKU=1",
+        "-DNUNCHAKU_USE_HIP=1",
         "-std=c++20",
         "--offload-arch=gfx1201",
         f"--rocm-path={ROCM_HOME}",
@@ -236,12 +252,14 @@ if __name__ == "__main__":
 
     extra_include_dirs = INCLUDE_DIRS.copy()
     library_dirs: list[str] = []
+    libraries: list[str] = []
 
     if USING_ROCM:
         hip_includes = [path for path in HIP_INCLUDE_DIRS if os.path.isdir(path)]
         hip_libs = [path for path in HIP_LIBRARY_DIRS if os.path.isdir(path)]
         extra_include_dirs.extend(hip_includes)
         library_dirs.extend(hip_libs)
+        libraries.extend(HIP_LIBRARIES)
 
     ExtensionImpl = HIPExtension if USING_ROCM else CUDAExtension
 
@@ -254,61 +272,69 @@ if __name__ == "__main__":
         assert len(sm_targets) > 0, "No SM targets found"
         device_flags = cuda_device_flags(debug_mode, sm_targets)
 
-    extra_compile_args = {
-        "cxx": host_flags,
-        "nvcc": device_flags,
-    }
+    extra_compile_args = {"cxx": host_flags}
+    if USING_ROCM:
+        extra_compile_args["hipcc"] = device_flags
+        extra_compile_args["nvcc"] = []
+    else:
+        extra_compile_args["nvcc"] = device_flags
+
+    sources = [
+        "nunchaku/csrc/pybind.cpp",
+        "src/interop/torch.cpp",
+        "src/activation.cpp",
+        "src/layernorm.cpp",
+        "src/Linear.cpp",
+        *ncond("src/FluxModel.cpp"),
+        *ncond("src/SanaModel.cpp"),
+        "src/Serialization.cpp",
+        "src/Module.cpp",
+        "src/kernels/activation_kernels.cu",
+        "src/kernels/layernorm_kernels.cu",
+        "src/kernels/misc_kernels.cu",
+        "src/kernels/zgemm/gemm_w4a4.cu",
+        "src/kernels/zgemm/gemm_w4a4_test.cu",
+        "src/kernels/zgemm/gemm_w4a4_launch_fp16_int4.cu",
+        "src/kernels/zgemm/gemm_w4a4_launch_fp16_int4_fasteri2f.cu",
+        "src/kernels/zgemm/gemm_w4a4_launch_fp16_fp4.cu",
+        "src/kernels/zgemm/gemm_w4a4_launch_bf16_int4.cu",
+        "src/kernels/zgemm/gemm_w4a4_launch_bf16_fp4.cu",
+        "src/kernels/zgemm/gemm_w8a8.cu",
+        "src/kernels/zgemm/attention.cu",
+        "src/kernels/dwconv.cu",
+        "src/kernels/gemm_batched.cu",
+        "src/kernels/gemm_f16.cu",
+        "src/kernels/awq/gemm_awq.cu",
+        "src/kernels/awq/gemv_awq.cu",
+    ]
+
+    if not USING_ROCM:
+        sources.extend(
+            [
+                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_hdim64_fp16_sm80.cu",
+                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_hdim64_bf16_sm80.cu",
+                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_hdim128_fp16_sm80.cu",
+                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_hdim128_bf16_sm80.cu",
+                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_block_hdim64_fp16_sm80.cu",
+                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_block_hdim64_bf16_sm80.cu",
+                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_block_hdim128_fp16_sm80.cu",
+                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_block_hdim128_bf16_sm80.cu",
+                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/flash_api.cpp",
+                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/flash_api_adapter.cpp",
+            ]
+        )
 
     extension_kwargs = dict(
         name="nunchaku._C",
-        sources=[
-            "nunchaku/csrc/pybind.cpp",
-            "src/interop/torch.cpp",
-            "src/activation.cpp",
-            "src/layernorm.cpp",
-            "src/Linear.cpp",
-            *ncond("src/FluxModel.cpp"),
-            *ncond("src/SanaModel.cpp"),
-            "src/Serialization.cpp",
-            "src/Module.cpp",
-            *ncond("third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_hdim64_fp16_sm80.cu"),
-            *ncond("third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_hdim64_bf16_sm80.cu"),
-            *ncond("third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_hdim128_fp16_sm80.cu"),
-            *ncond("third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_hdim128_bf16_sm80.cu"),
-            *ncond("third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_block_hdim64_fp16_sm80.cu"),
-            *ncond("third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_block_hdim64_bf16_sm80.cu"),
-            *ncond(
-                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_block_hdim128_fp16_sm80.cu"
-            ),
-            *ncond(
-                "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_block_hdim128_bf16_sm80.cu"
-            ),
-            "src/kernels/activation_kernels.cu",
-            "src/kernels/layernorm_kernels.cu",
-            "src/kernels/misc_kernels.cu",
-            "src/kernels/zgemm/gemm_w4a4.cu",
-            "src/kernels/zgemm/gemm_w4a4_test.cu",
-            "src/kernels/zgemm/gemm_w4a4_launch_fp16_int4.cu",
-            "src/kernels/zgemm/gemm_w4a4_launch_fp16_int4_fasteri2f.cu",
-            "src/kernels/zgemm/gemm_w4a4_launch_fp16_fp4.cu",
-            "src/kernels/zgemm/gemm_w4a4_launch_bf16_int4.cu",
-            "src/kernels/zgemm/gemm_w4a4_launch_bf16_fp4.cu",
-            "src/kernels/zgemm/gemm_w8a8.cu",
-            "src/kernels/zgemm/attention.cu",
-            "src/kernels/dwconv.cu",
-            "src/kernels/gemm_batched.cu",
-            "src/kernels/gemm_f16.cu",
-            "src/kernels/awq/gemm_awq.cu",
-            "src/kernels/awq/gemv_awq.cu",
-            *ncond("third_party/Block-Sparse-Attention/csrc/block_sparse_attn/flash_api.cpp"),
-            *ncond("third_party/Block-Sparse-Attention/csrc/block_sparse_attn/flash_api_adapter.cpp"),
-        ],
+        sources=sources,
         extra_compile_args=extra_compile_args,
         include_dirs=extra_include_dirs,
     )
 
     if library_dirs:
         extension_kwargs["library_dirs"] = library_dirs
+    if libraries:
+        extension_kwargs["libraries"] = libraries
 
     nunchaku_extension = ExtensionImpl(**extension_kwargs)
 
