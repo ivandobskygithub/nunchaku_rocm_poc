@@ -1,0 +1,99 @@
+name: Windows ROCm Build & Test
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    name: Build, Test, and Profile (Windows ROCm)
+    runs-on:
+      - self-hosted
+      - Windows
+      - ROCm
+    timeout-minutes: 120
+    env:
+      ROCM_PATH: 'C:\\Program Files\\AMD\\ROCm'
+      HIP_PATH: '${{ env.ROCM_PATH }}\\hip'
+      PYTORCH_ROCM_ARCH: gfx1102
+      PYTHONIOENCODING: utf-8
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Prepare ROCm paths
+        shell: pwsh
+        run: |
+          if (-not (Test-Path $env:ROCM_PATH)) {
+            throw "ROCM_PATH '$env:ROCM_PATH' is not accessible on this runner."
+          }
+          $env:PATH = "${env:ROCM_PATH}\\bin;${env:HIP_PATH}\\bin;" + $env:PATH
+          Write-Host "Updated PATH with ROCm binaries."
+          Write-Host "hipcc version:" (hipcc --version)
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install project dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip setuptools wheel build
+          python -m pip install -e .[dev]
+
+      - name: Validate HIP availability
+        shell: pwsh
+        run: |
+          python - <<'PY'
+    import torch
+    if not torch.cuda.is_available():
+        raise SystemExit("torch.cuda is not available; ensure ROCm drivers are installed.")
+    print("Torch:", torch.__version__)
+    print("HIP version:", torch.version.hip)
+    print("Device name:", torch.cuda.get_device_name(0))
+    PY
+
+      - name: Run unit tests
+        shell: pwsh
+        run: |
+          python -m pytest --maxfail=1 --disable-warnings -q
+
+      - name: Profile ROCm examples
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path logs -Force | Out-Null
+          python scripts\profile_rocm_examples.py `
+            --examples examples\v1\qwen-image-edit-2509.py examples\flux.1-dev.py `
+            --output logs\rocm_profile.json
+
+      - name: Build ROCm wheel
+        shell: pwsh
+        run: |
+          python -m build --wheel --outdir dist\rocm
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocm-wheels-${{ github.run_id }}
+          path: dist/rocm/*.whl
+          retention-days: 14
+
+      - name: Upload ROCm profile report
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocm-profile-${{ github.run_id }}
+          path: logs/rocm_profile.json
+          if-no-files-found: warn
+
+      - name: Publish release artifacts
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/rocm/*.whl
+            logs/rocm_profile.json
+          fail_on_unmatched_files: false
