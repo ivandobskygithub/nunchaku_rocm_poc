@@ -25,7 +25,7 @@ void test_rmsnorm_rope(Tensor input, Tensor output, Tensor norm_q, Tensor norm_k
 
     dim3 grid(M / GEMM::BLOCK_M, N / GEMM::BLOCK_N);
 
-    func<<<grid, GEMM::WARP_SIZE * GEMM::NUM_WARPS, kernel::SHMEM_SIZE, getCurrentCUDAStream()>>>(
+    func<<<grid, GEMM::WARP_SIZE * GEMM::NUM_WARPS, kernel::SHMEM_SIZE, getCurrentGpuStream()>>>(
         typename kernel::Arguments{.input        = input.data_ptr<GEMM::half_t>(),
                                    .output       = output.data_ptr<GEMM::half_t>(),
                                    .M            = M,
@@ -63,7 +63,7 @@ void test_pack_qkv(Tensor input, Tensor out_q, Tensor out_k, Tensor out_v, int n
 
     dim3 grid(M / GEMM::BLOCK_M, N / GEMM::BLOCK_N);
 
-    func<<<grid, GEMM::WARP_SIZE * GEMM::NUM_WARPS, kernel::SHMEM_SIZE, getCurrentCUDAStream()>>>(
+    func<<<grid, GEMM::WARP_SIZE * GEMM::NUM_WARPS, kernel::SHMEM_SIZE, getCurrentGpuStream()>>>(
         typename kernel::Arguments{
             .input        = input.data_ptr<GEMM::half_t>(),
             .output       = output.data_ptr<GEMM::half_t>(),

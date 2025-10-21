@@ -3,7 +3,7 @@
 #include "common.h"
 
 struct Device {
-    enum Type { INVALID_DEVICE_TYPE = 0, CPU, CUDA };
+    enum Type { INVALID_DEVICE_TYPE = 0, CPU, CUDA, ROCM };
 
     Type type = INVALID_DEVICE_TYPE;
     int idx   = 0;
@@ -13,6 +13,20 @@ struct Device {
     }
     static constexpr Device cuda(int idx = 0) {
         return Device{CUDA, idx};
+    }
+    static constexpr Device rocm(int idx = 0) {
+        return Device{ROCM, idx};
+    }
+    static constexpr Device gpu(int idx = 0) {
+#if defined(NUNCHAKU_USE_HIP)
+        return rocm(idx);
+#else
+        return cuda(idx);
+#endif
+    }
+
+    bool is_gpu() const {
+        return type == CUDA || type == ROCM;
     }
 };
 
@@ -74,48 +88,48 @@ public:
     BufferHost(size_t size) {
         this->size        = size;
         this->device.type = Device::CPU;
-        checkCUDA(cudaHostAlloc(&this->ptr, size, cudaHostAllocPortable));
+        gpu_runtime::check(gpu_runtime::hostAlloc(&this->ptr, size, gpu_runtime::HostAllocPortable));
     }
     virtual ~BufferHost() {
-        checkCUDA(cudaFreeHost(this->ptr));
+        gpu_runtime::check(gpu_runtime::freeHost(this->ptr));
     }
 };
 
-class BufferCUDA : public Buffer {
+class BufferGPU : public Buffer {
 public:
-    BufferCUDA(size_t size) {
+    BufferGPU(size_t size) {
         this->size        = size;
-        this->device.type = Device::CUDA;
-        // checkCUDA(cudaGetDevice(&this->device.idx));
-        this->device.idx = CUDADeviceContext::getDevice();
+        this->device      = Device::gpu();
+        // this->device.idx = GpuDeviceContext::getDevice();
+        this->device.idx = GpuDeviceContext::getDevice();
         if (size == 0) {
             this->ptr = nullptr;
         }
         // TODO: buffer used in multiple streams?
-        checkCUDA(cudaMallocAsync(&this->ptr, size, getCurrentCUDAStream()));
+        gpu_runtime::check(gpu_runtime::mallocAsync(&this->ptr, size, getCurrentGpuStream()));
     }
-    virtual ~BufferCUDA() {
+    virtual ~BufferGPU() {
         if (this->size == 0) {
             assert(!this->ptr);
             return;
         }
-        checkCUDA(cudaFreeAsync(this->ptr, getCurrentCUDAStream()));
+        gpu_runtime::check(gpu_runtime::freeAsync(this->ptr, getCurrentGpuStream()));
     }
     virtual bool isAsyncBuffer() override {
         return true;
     }
 };
 
-class BufferCUDASync : public Buffer {
+class BufferGPUSync : public Buffer {
 public:
-    BufferCUDASync(size_t size) {
+    BufferGPUSync(size_t size) {
         this->size        = size;
-        this->device.type = Device::CUDA;
-        checkCUDA(cudaGetDevice(&this->device.idx));
-        checkCUDA(cudaMalloc(&this->ptr, size));
+        this->device      = Device::gpu();
+        gpu_runtime::check(gpu_runtime::getDevice(&this->device.idx));
+        gpu_runtime::check(gpu_runtime::mallocMemory(&this->ptr, size));
     }
-    virtual ~BufferCUDASync() {
-        checkCUDA(cudaFree(this->ptr));
+    virtual ~BufferGPUSync() {
+        gpu_runtime::check(gpu_runtime::freeMemory(this->ptr));
     }
 };
 
@@ -280,6 +294,9 @@ public:
     bool is_cuda() const {
         return device().type == Device::CUDA;
     }
+    bool is_gpu() const {
+        return device().is_gpu();
+    }
 
     TensorOptions options() const {
         return TensorOptions{device(), dtype()};
@@ -415,8 +432,8 @@ public:
 
     Tensor &zero_() {
         assert(this->is_contiguous());
-        checkCUDA(cudaMemsetAsync(
-            data_ptr<char>() + shape.offset * scalar_size(), 0, shape.size() * scalar_size(), getCurrentCUDAStream()));
+        gpu_runtime::check(gpu_runtime::memsetAsync(
+            data_ptr<char>() + shape.offset * scalar_size(), 0, shape.size() * scalar_size(), getCurrentGpuStream()));
         return *this;
     }
     Tensor &copy_(Tensor other) {
@@ -432,10 +449,11 @@ public:
             return *this;
         }
 
-        std::optional<CUDADeviceContext> operation_ctx_guard;
+        std::optional<GpuDeviceContext> operation_ctx_guard;
 
-        if (this->device().type == Device::CUDA) {
-        } else if (other.device().type == Device::CUDA) {
+        if (this->device().is_gpu()) {
+            operation_ctx_guard.emplace(this->device().idx);
+        } else if (other.device().is_gpu()) {
             operation_ctx_guard.emplace(other.device().idx);
         }
 
@@ -444,13 +462,13 @@ public:
             return *this;
         }
 
-        lockBuffer(this->buffer, getCurrentCUDAStream());
-        lockBuffer(other.buffer, getCurrentCUDAStream());
-        checkCUDA(cudaMemcpyAsync(data_ptr<char>(),
-                                  other.data_ptr<char>(),
-                                  shape.size() * scalar_size(),
-                                  getCopyKind(this->device(), other.device()),
-                                  getCurrentCUDAStream()));
+        lockBuffer(this->buffer, getCurrentGpuStream());
+        lockBuffer(other.buffer, getCurrentGpuStream());
+        gpu_runtime::check(gpu_runtime::memcpyAsync(data_ptr<char>(),
+                                                    other.data_ptr<char>(),
+                                                    shape.size() * scalar_size(),
+                                                    getCopyKind(this->device(), other.device()),
+                                                    getCurrentGpuStream()));
         return *this;
     }
 
@@ -471,10 +489,10 @@ public:
         assert(shape.is_contiguous());
         if (device.type == Device::CPU) {
             result.buffer = std::make_shared<BufferMalloc>(shape.size() * scalarSize.at(scalarType));
-        } else if (device.type == Device::CUDA) {
+        } else if (device.is_gpu()) {
             // TODO: cross device allocate
-            CUDADeviceContext ctx(device.idx);
-            result.buffer = std::make_shared<BufferCUDA>(shape.size() * scalarSize.at(scalarType));
+            GpuDeviceContext ctx(device.idx);
+            result.buffer = std::make_shared<BufferGPU>(shape.size() * scalarSize.at(scalarType));
         } else {
             assert(false);
         }
@@ -484,10 +502,10 @@ public:
         if (fill) {
             if (device.type == Device::CPU) {
                 memset(result.buffer->getPtr(), 0xCC, result.buffer->getSize());
-            } else if (device.type == Device::CUDA) {
-                CUDADeviceContext ctx(device.idx);
-                checkCUDA(
-                    cudaMemsetAsync(result.buffer->getPtr(), 0xCC, result.buffer->getSize(), getCurrentCUDAStream()));
+            } else if (device.is_gpu()) {
+                GpuDeviceContext ctx(device.idx);
+                gpu_runtime::check(gpu_runtime::memsetAsync(
+                    result.buffer->getPtr(), 0xCC, result.buffer->getSize(), getCurrentGpuStream()));
             }
         }
 
@@ -502,7 +520,8 @@ public:
     static Tensor ones(TensorShape shape, ScalarType scalarType, Device device) {
         Tensor result = allocate(shape, scalarType, device);
         // FIXME FIXME FIXME
-        checkCUDA(cudaMemsetAsync(result.buffer->getPtr(), 1, result.buffer->getSize(), getCurrentCUDAStream()));
+        gpu_runtime::check(gpu_runtime::memsetAsync(
+            result.buffer->getPtr(), 1, result.buffer->getSize(), getCurrentGpuStream()));
         return result;
     }
     static Tensor
@@ -522,18 +541,18 @@ public:
         Tensor result = allocate(this->shape.dataExtent, this->scalarType, device);
         result.copy_(*this);
 
-        // lockBuffer(this->buffer, getCurrentCUDAStream());
-        // lockBuffer(result.buffer, getCurrentCUDAStream());
+        // lockBuffer(this->buffer, getCurrentGpuStream());
+        // lockBuffer(result.buffer, getCurrentGpuStream());
         // checkCUDA(cudaMemcpyAsync(result.data_ptr(), this->data_ptr(), result.buffer->getSize(), cudaMemcpyDefault,
-        // getCurrentCUDAStream())); if (this->device().type == Device::CPU && device.type == Device::CUDA) {
+        // getCurrentGpuStream())); if (this->device().type == Device::CPU && device.type == Device::CUDA) {
         //     checkCUDA(cudaMemcpyAsync(result.data_ptr(), this->data_ptr(), result.buffer->getSize(),
-        //     cudaMemcpyHostToDevice, getCurrentCUDAStream()));
+        //     cudaMemcpyHostToDevice, getCurrentGpuStream()));
         // } else if (this->device().type == Device::CUDA && device.type == Device::CPU) {
         //     checkCUDA(cudaMemcpyAsync(result.data_ptr(), this->data_ptr(), result.buffer->getSize(),
-        //     cudaMemcpyDeviceToHost, getCurrentCUDAStream()));
+        //     cudaMemcpyDeviceToHost, getCurrentGpuStream()));
         // } else {
         //     checkCUDA(cudaMemcpyAsync(result.data_ptr(), this->data_ptr(), result.buffer->getSize(),
-        //     cudaMemcpyDefault, getCurrentCUDAStream()));
+        //     cudaMemcpyDefault, getCurrentGpuStream()));
         // }
         return result;
     }
@@ -554,32 +573,34 @@ public:
     // }
 
 private:
-    static cudaMemcpyKind getCopyKind(Device dst, Device src) {
-        if (src.type == Device::CPU && dst.type == Device::CUDA) {
-            return cudaMemcpyHostToDevice;
+    static gpu_runtime::MemcpyKind getCopyKind(Device dst, Device src) {
+        const bool srcGpu = src.is_gpu();
+        const bool dstGpu = dst.is_gpu();
+        if (!srcGpu && dstGpu) {
+            return gpu_runtime::MemcpyHostToDevice;
         }
-        if (src.type == Device::CUDA && dst.type == Device::CPU) {
-            return cudaMemcpyDeviceToHost;
+        if (srcGpu && !dstGpu) {
+            return gpu_runtime::MemcpyDeviceToHost;
         }
-        if (src.type == Device::CUDA && dst.type == Device::CUDA) {
-            return cudaMemcpyDeviceToDevice;
+        if (srcGpu && dstGpu) {
+            return gpu_runtime::MemcpyDeviceToDevice;
         }
-        if (src.type == Device::CPU && dst.type == Device::CPU) {
-            return cudaMemcpyHostToHost;
+        if (!srcGpu && !dstGpu) {
+            return gpu_runtime::MemcpyHostToHost;
         }
-        return cudaMemcpyDefault;
+        return gpu_runtime::MemcpyDefault;
     }
 
     // static bool isAsyncBuffer(Buffer *buffer) {
-    //     return dynamic_cast<BufferCUDA *>(buffer);
+    //     return dynamic_cast<BufferGPU *>(buffer);
     // }
 
-    static inline std::map<cudaStream_t, std::set<std::shared_ptr<Buffer>>> lockedBuffers;
+    static inline std::map<gpu_runtime::Stream, std::set<std::shared_ptr<Buffer>>> lockedBuffers;
 
 public:
     // before launching an async operation, make sure to lock the buffer in case the buffer is freed before GPU
     // completes
-    static void lockBuffer(std::shared_ptr<Buffer> buffer, cudaStream_t stream) {
+    static void lockBuffer(std::shared_ptr<Buffer> buffer, gpu_runtime::Stream stream) {
         if (!buffer->isAsyncBuffer()) {
             lockedBuffers[stream].insert(buffer);
         }
@@ -589,16 +610,16 @@ public:
     static void unlockBuffers() {
         lockedBuffers.clear();
     }
-    static void unlockBuffers(cudaStream_t stream) {
+    static void unlockBuffers(gpu_runtime::Stream stream) {
         lockedBuffers[stream].clear();
     }
 
     static void synchronizeDevice() {
-        checkCUDA(cudaDeviceSynchronize());
+        gpu_runtime::check(gpu_runtime::deviceSynchronize());
         unlockBuffers();
     }
-    static void synchronizeStream(cudaStream_t stream) {
-        checkCUDA(cudaStreamSynchronize(stream));
+    static void synchronizeStream(gpu_runtime::Stream stream) {
+        gpu_runtime::check(gpu_runtime::streamSynchronize(stream));
         unlockBuffers(stream);
     }
 };

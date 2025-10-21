@@ -10,7 +10,7 @@ inline void TORCH_CHECK(bool cond, const std::string &msg = "") {
 
 template<typename T>
 inline void C10_CUDA_CHECK(T ret) {
-    return checkCUDA(ret);
+    gpu_runtime::check(ret);
 }
 
 namespace at {
@@ -34,13 +34,13 @@ namespace cuda {
 using ::getCurrentDeviceProperties;
 
 struct StreamWrapper {
-    cudaStream_t st;
-    cudaStream_t stream() const {
+    gpu_runtime::Stream st;
+    gpu_runtime::Stream stream() const {
         return st;
     }
 };
-inline StreamWrapper getCurrentCUDAStream() {
-    return StreamWrapper(::getCurrentCUDAStream());
+inline StreamWrapper getCurrentGpuStream() {
+    return StreamWrapper(::getCurrentGpuStream());
 }
 
 struct CUDAGuard {
@@ -69,7 +69,9 @@ using at::kFloat16;
 using at::kBFloat16;
 using at::kInt32;
 using at::kInt64;
-constexpr Device kCUDA = Device::cuda();
+constexpr Device kCUDA = Device::gpu();
+constexpr Device kROCM = Device::rocm();
+constexpr Device kGPU  = Device::gpu();
 
 using IntArrayRef   = std::vector<int>;
 using TensorOptions = Tensor::TensorOptions;

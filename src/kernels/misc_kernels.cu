@@ -13,7 +13,7 @@ Tensor add(Tensor a, Tensor b) {
     int threadsPerBlock = 1024;
     int blocksPerGrid   = (a.numel() + threadsPerBlock - 1) / threadsPerBlock;
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     Tensor out = Tensor::empty_like(a);
 
@@ -46,7 +46,7 @@ void mul_add(Tensor x, Tensor scale, Tensor bias) {
     int threadsPerBlock = 1024;
     int blocksPerGrid   = (x.numel() + threadsPerBlock * unroll - 1) / (threadsPerBlock * unroll);
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     dispatch(x.scalar_type(), [&]<typename scalar_t>() {
         if (scale.valid()) {
@@ -96,7 +96,7 @@ void mul_add_batch(Tensor x, Tensor scale, bool batch_scale, double scale_shift,
     int threadsPerBlock = 1024;
     dim3 grid(ceilDiv(numel, threadsPerBlock * unroll), batch_size);
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     dispatch(x.scalar_type(), [&]<typename scalar_t>() {
         if (scale.valid()) {
@@ -134,7 +134,7 @@ Tensor embedding(Tensor input_id, Tensor lookup) {
     auto shapeOut = input_id.shape;
     shapeOut.dataExtent.push_back(lookup.shape[-1]);
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     Tensor out = Tensor::empty(shapeOut, lookup.scalar_type(), input_id.device());
 
@@ -149,7 +149,7 @@ Tensor embedding(Tensor input_id, Tensor lookup) {
 Tensor argmax_sample(Tensor logits) {
     assert(logits.ndims() == 2);
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     Tensor out = Tensor::empty({logits.shape[0]}, Tensor::INT32, logits.device());
 
@@ -167,7 +167,7 @@ void splitqkv(Tensor qkv, Tensor q, Tensor k, Tensor v) {
     // assert(qkv.shape[0] == k.shape[0]);
     // assert(qkv.shape[0] == v.shape[0]);
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     int dim_q = q.shape[-1] * q.shape[-2];
     int dim_k = k.shape[-1] * k.shape[-2];
@@ -195,7 +195,7 @@ std::array<Tensor, N> split_mod(Tensor input) {
     int threadsPerBlock = 1024;
     int blocksPerGrid   = (input.numel() + threadsPerBlock - 1) / threadsPerBlock;
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     auto shapeOut = TensorShape(input.shape.dataExtent);
     shapeOut[-1] /= N;
@@ -227,7 +227,7 @@ Tensor quant_static(Tensor x, float scale) {
     int threadsPerBlock = 1024;
     int blocksPerGrid   = (x.numel() + threadsPerBlock * unroll - 1) / (threadsPerBlock * unroll);
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     dispatch(x.scalar_type(), [&]<typename scalar_t>() {
         quant_kernel_static<scalar_t, unroll><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(
@@ -247,7 +247,7 @@ Tensor quant_static_fuse_gelu(Tensor x, float scale) {
     int threadsPerBlock = 1024;
     int blocksPerGrid   = (x.numel() + threadsPerBlock * unroll - 1) / (threadsPerBlock * unroll);
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     dispatch(x.scalar_type(), [&]<typename scalar_t>() {
         quant_kernel_static_fuse_gelu<scalar_t, unroll><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(
@@ -266,7 +266,7 @@ void cast(Tensor input, Tensor output) {
         assert(input.scalar_size() == output.scalar_size());
     }
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     dispatch(input.scalar_type(), [&]<typename input_t>() {
         dispatch(output.scalar_type(), [&]<typename output_t>() {
@@ -298,7 +298,7 @@ Tensor topk(Tensor x, int k) {
 
     Tensor out = Tensor::empty(outShape, Tensor::INT32, x.device());
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     dispatchVal(k, std::make_integer_sequence<int, MAXK + 1>(), [&]<int K>() {
         if constexpr (K == 0) {

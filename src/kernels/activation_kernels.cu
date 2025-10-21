@@ -8,7 +8,7 @@
     int num_tokens = input.numel() / d;                                                                                \
     dim3 grid(num_tokens);                                                                                             \
     dim3 block(std::min(d, 1024));                                                                                     \
-    const cudaStream_t stream = getCurrentCUDAStream();                                                                \
+    const cudaStream_t stream = getCurrentGpuStream();                                                                \
     VLLM_DISPATCH_FLOATING_TYPES(input.scalar_type(), "activation_kernel", [&] {                                       \
         vllm::activation_kernel<scalar_t, KERNEL<scalar_t>>                                                            \
             <<<grid, block, 0, stream>>>(out.data_ptr<scalar_t>(), input.data_ptr<scalar_t>(), d);                     \
@@ -21,7 +21,7 @@ void silu_and_mul(Tensor &out,   // [..., d]
     int d              = input.size(-1) / 2;
     dim3 grid(num_tokens);
     dim3 block(std::min(d, 1024));
-    const cudaStream_t stream = getCurrentCUDAStream();
+    const cudaStream_t stream = getCurrentGpuStream();
     //   dispatchFloat(input.scalar_type(), [&]<typename scalar_t>() {
     //     vllm::silu_and_mul_kernel<scalar_t><<<grid, block, 0, stream>>>(
     //         out.data_ptr<scalar_t>(), input.data_ptr<scalar_t>(), d);
@@ -41,7 +41,7 @@ void invoke_dequant_silu_and_mul_quant(Tensor &out,   // [..., d]
     int d              = input.size(-1) / 2;
     dim3 grid(num_tokens);
     dim3 block(std::min(d, 1024));
-    const cudaStream_t stream = getCurrentCUDAStream();
+    const cudaStream_t stream = getCurrentGpuStream();
     vllm::dequant_silu_and_mul_quant_kernel<float, false><<<grid, block, 0, stream>>>(
         out.data_ptr<int8_t>(), input.data_ptr<int32_t>(), d, scale_gate, scale_up, scale_out);
 }
@@ -57,7 +57,7 @@ void invoke_dequant_silu_and_mul_quant(Tensor &out,   // [..., d]
     int d              = input.size(-1) / 2;
     dim3 grid(num_tokens);
     dim3 block(std::min(d, 1024));
-    const cudaStream_t stream = getCurrentCUDAStream();
+    const cudaStream_t stream = getCurrentGpuStream();
     vllm::dequant_silu_and_mul_quant_kernel<float *, true><<<grid, block, 0, stream>>>(out.data_ptr<int8_t>(),
                                                                                        input.data_ptr<int32_t>(),
                                                                                        d,

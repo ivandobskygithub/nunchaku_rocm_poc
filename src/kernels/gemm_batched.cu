@@ -82,7 +82,7 @@ Tensor gemm_batched_fp16(Tensor a,  // FP16 row-major [(... batch ...), M, K]
                                        batch};
 
     Gemm op;
-    BufferCUDA workspace(Gemm::get_workspace_size(arguments));
+    BufferGPU workspace(Gemm::get_workspace_size(arguments));
 
     cutlass::Status status = op.can_implement(arguments);
     if (status != cutlass::Status::kSuccess) {

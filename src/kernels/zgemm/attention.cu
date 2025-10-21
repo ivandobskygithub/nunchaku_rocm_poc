@@ -74,7 +74,7 @@ void attention_fp16(Tensor q, // packed [Batch, Head, TokensQ, HEAD_DIM]
                 checkCUDA(cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
             }
 
-            func<<<grid, GEMM::WARP_SIZE * GEMM::NUM_WARPS, shmem, getCurrentCUDAStream()>>>(q.data_ptr<packed_q_t>(),
+            func<<<grid, GEMM::WARP_SIZE * GEMM::NUM_WARPS, shmem, getCurrentGpuStream()>>>(q.data_ptr<packed_q_t>(),
                                                                                              k.data_ptr<packed_k_t>(),
                                                                                              v.data_ptr<packed_v_t>(),
                                                                                              scale,

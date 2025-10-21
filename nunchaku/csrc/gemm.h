@@ -21,7 +21,7 @@ public:
                                           bias,
                                           use_fp4,
                                           bf16 ? Tensor::BF16 : Tensor::FP16,
-                                          Device::cuda((int)deviceId));
+                                          Device::gpu((int)deviceId));
     }
 
     torch::Tensor forward(torch::Tensor x) {

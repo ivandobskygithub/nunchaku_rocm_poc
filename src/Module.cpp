@@ -4,9 +4,9 @@
 
 void Module::copyWithCast(Tensor dst, Tensor src) {
     assert(dst.is_contiguous());
-    assert(dst.device().type == Device::CUDA);
+    assert(dst.device().is_gpu());
 
-    if (src.device().type == Device::CUDA && src.device().idx == dst.device().idx) {
+    if (src.device().is_gpu() && src.device().idx == dst.device().idx) {
         nunchaku::kernels::cast(src, dst);
     } else {
         Tensor tmp;

@@ -219,16 +219,16 @@ struct LayerOffloadHelper {
 
     func_t funcCompute, funcLoad, funcUnload;
 
-    std::unique_ptr<CUDAStreamWrapper> streamCompute;
-    std::unique_ptr<CUDAStreamWrapper> streamLoad;
-    std::unique_ptr<CUDAEventWrapper> eventComputeDone;
-    std::unique_ptr<CUDAEventWrapper> eventLoadDone;
+    std::unique_ptr<GpuStreamWrapper> streamCompute;
+    std::unique_ptr<GpuStreamWrapper> streamLoad;
+    std::unique_ptr<GpuEventWrapper> eventComputeDone;
+    std::unique_ptr<GpuEventWrapper> eventLoadDone;
 
     LayerOffloadHelper(bool offload, int numLayers, func_t funcCompute, func_t funcLoad, func_t funcUnload)
         : offload(offload), numLayers(numLayers), funcCompute(funcCompute), funcLoad(funcLoad), funcUnload(funcUnload) {
         if (offload) {
-            streamCompute = std::make_unique<CUDAStreamWrapper>();
-            streamLoad    = std::make_unique<CUDAStreamWrapper>();
+            streamCompute = std::make_unique<GpuStreamWrapper>();
+            streamLoad    = std::make_unique<GpuStreamWrapper>();
 
             needWorkaround = checkWorkaround();
             if (needWorkaround) {
@@ -250,20 +250,20 @@ private:
         if (!offload) {
             funcCompute(layer);
         } else {
-            std::unique_ptr<CUDAEventWrapper> nextComputeDone, nextLoadDone;
+            std::unique_ptr<GpuEventWrapper> nextComputeDone, nextLoadDone;
 
             // issue compute kernels first so that we could still overlap compute and memcpy if memory is not pinned
             {
-                CUDAStreamContext ctx(streamCompute->stream);
+                GpuStreamContext ctx(streamCompute->stream);
                 waitEvent(eventLoadDone.get());
                 funcCompute(layer);
-                nextComputeDone = std::make_unique<CUDAEventWrapper>();
-                checkCUDA(cudaEventRecord(nextComputeDone->event, getCurrentCUDAStream()));
+                nextComputeDone = std::make_unique<GpuEventWrapper>();
+                gpu_runtime::check(gpu_runtime::eventRecord(nextComputeDone->event, getCurrentGpuStream()));
                 workaroundFlush();
             }
 
             {
-                CUDAStreamContext ctx(streamLoad->stream);
+                GpuStreamContext ctx(streamLoad->stream);
                 waitEvent(eventComputeDone.get());
                 if (layer - 1 > 0) {
                     funcUnload(layer - 1);
@@ -271,8 +271,8 @@ private:
                 if (layer + 1 < numLayers) {
                     funcLoad(layer + 1);
                 }
-                nextLoadDone = std::make_unique<CUDAEventWrapper>();
-                checkCUDA(cudaEventRecord(nextLoadDone->event, getCurrentCUDAStream()));
+                nextLoadDone = std::make_unique<GpuEventWrapper>();
+                gpu_runtime::check(gpu_runtime::eventRecord(nextLoadDone->event, getCurrentGpuStream()));
                 workaroundFlush();
             }
 
@@ -283,11 +283,11 @@ private:
         }
     }
 
-    static void waitEvent(CUDAEventWrapper *event) {
+    static void waitEvent(GpuEventWrapper *event) {
         if (!event) {
             return;
         }
-        checkCUDA(cudaStreamWaitEvent(getCurrentCUDAStream(), event->event));
+        gpu_runtime::check(gpu_runtime::streamWaitEvent(getCurrentGpuStream(), event->event));
     }
 
     // WDDM prevents multiple streams run concurrently
@@ -312,12 +312,12 @@ private:
         if (!needWorkaround) {
             return;
         }
-        cudaStreamQuery(getCurrentCUDAStream());
+        gpu_runtime::streamQuery(getCurrentGpuStream());
     }
     void workaroundSynchronize() {
         if (!needWorkaround) {
             return;
         }
-        checkCUDA(cudaEventSynchronize(eventComputeDone->event));
+        gpu_runtime::check(gpu_runtime::eventSynchronize(eventComputeDone->event));
     }
 };

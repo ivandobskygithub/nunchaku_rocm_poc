@@ -19,9 +19,9 @@ public:
         }
         ModuleWrapper::init(deviceId);
 
-        CUDADeviceContext ctx(this->deviceId);
+        GpuDeviceContext ctx(this->deviceId);
         net = std::make_unique<FluxModel>(
-            use_fp4, offload, bf16 ? Tensor::BF16 : Tensor::FP16, Device::cuda((int)deviceId));
+            use_fp4, offload, bf16 ? Tensor::BF16 : Tensor::FP16, Device::gpu((int)deviceId));
     }
 
     bool isBF16() {
@@ -62,7 +62,7 @@ public:
                           std::optional<torch::Tensor> controlnet_single_block_samples = std::nullopt,
                           bool skip_first_layer                                        = false) {
         checkModel();
-        CUDADeviceContext ctx(deviceId);
+        GpuDeviceContext ctx(deviceId);
 
         spdlog::debug("QuantizedFluxModel forward");
 
@@ -101,7 +101,7 @@ public:
                   torch::Tensor rotary_emb_context,
                   std::optional<torch::Tensor> controlnet_block_samples        = std::nullopt,
                   std::optional<torch::Tensor> controlnet_single_block_samples = std::nullopt) {
-        CUDADeviceContext ctx(deviceId);
+        GpuDeviceContext ctx(deviceId);
 
         spdlog::debug("QuantizedFluxModel forward_layer {}", idx);
 
@@ -134,7 +134,7 @@ public:
                                        torch::Tensor hidden_states,
                                        torch::Tensor temb,
                                        torch::Tensor rotary_emb_single) {
-        CUDADeviceContext ctx(deviceId);
+        GpuDeviceContext ctx(deviceId);
 
         spdlog::debug("QuantizedFluxModel forward_single_layer {}", idx);
 
@@ -179,7 +179,7 @@ public:
             throw std::invalid_argument("skipRanks must be multiples of 16");
         }
 
-        CUDADeviceContext ctx(deviceId);
+        GpuDeviceContext ctx(deviceId);
 
         spdlog::info("Set lora scale to {} (skip {} ranks)", scale, skipRanks);
 
@@ -222,7 +222,7 @@ public:
                              torch::Tensor rotary_emb_context,
                              std::optional<torch::Tensor> controlnet_block_samples        = std::nullopt,
                              std::optional<torch::Tensor> controlnet_single_block_samples = std::nullopt) {
-        CUDADeviceContext ctx(deviceId);
+        GpuDeviceContext ctx(deviceId);
 
         spdlog::debug("QuantizedFluxModel forward_layer {}", idx);
 

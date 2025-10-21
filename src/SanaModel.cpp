@@ -5,7 +5,7 @@
 #include "flash_api.h"
 #include "kernels/misc_kernels.h"
 
-#include <nvtx3/nvToolsExt.h>
+#include "nvtx_utils.h"
 
 using spdlog::fmt_lib::format;
 using namespace nunchaku;
@@ -241,9 +241,9 @@ Tensor SanaLinearTransformerBlock::forward(Tensor hidden_states,
                                            bool pag,
                                            bool cfg) {
 
-    nvtxRangePushA("SanaLinearTransformerBlock");
+    NUNCHAKU_NVTX_PUSH_RANGE("SanaLinearTransformerBlock");
 
-    nvtxRangePushA("chunk");
+    NUNCHAKU_NVTX_PUSH_RANGE("chunk");
 
     // Tensor ones = Tensor::ones({hidden_size}, Tensor::FP16, x.device());
 
@@ -262,10 +262,10 @@ Tensor SanaLinearTransformerBlock::forward(Tensor hidden_states,
     auto &&[shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp] = chunked;
     // auto &&[shift_msa, scale_msa, gate_msa, shift_mlp, scale_mlp, gate_mlp] = kernels::split_mod<6>(timestep);
 
-    nvtxRangePop();
+    NUNCHAKU_NVTX_POP_RANGE();
 
     {
-        nvtxRangePushA("LinearAttention");
+        NUNCHAKU_NVTX_PUSH_RANGE("LinearAttention");
 
         Tensor residual           = hidden_states;
         Tensor norm_hidden_states = norm1.forward(hidden_states);
@@ -279,11 +279,11 @@ Tensor SanaLinearTransformerBlock::forward(Tensor hidden_states,
 
         hidden_states = attn_output;
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
     }
 
     {
-        nvtxRangePushA("CrossAttention");
+        NUNCHAKU_NVTX_PUSH_RANGE("CrossAttention");
 
         debug("norm_hidden_states_cross", hidden_states);
         Tensor attn_output = cross_attn.forward(hidden_states, encoder_hidden_states, cu_seqlens_img, cu_seqlens_txt);
@@ -293,11 +293,11 @@ Tensor SanaLinearTransformerBlock::forward(Tensor hidden_states,
 
         hidden_states = attn_output;
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
     }
 
     {
-        nvtxRangePushA("Feed-forward");
+        NUNCHAKU_NVTX_PUSH_RANGE("Feed-forward");
 
         debug("hidden_states_ff", hidden_states);
         Tensor norm_hidden_states = norm2.forward(hidden_states);
@@ -311,10 +311,10 @@ Tensor SanaLinearTransformerBlock::forward(Tensor hidden_states,
 
         hidden_states = ff_output;
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
     }
 
-    nvtxRangePop();
+    NUNCHAKU_NVTX_POP_RANGE();
 
     debug("hidden_states_out", hidden_states);
 

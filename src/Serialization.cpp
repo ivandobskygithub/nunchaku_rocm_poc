@@ -120,16 +120,17 @@ SafeTensors::SafeTensors(const std::string &filename) {
 
     auto methodPrivate = [&]() {
         this->mapped = std::make_unique<MMapImplPrivate>(filename);
-        checkCUDA(
-            cudaHostRegister(const_cast<char *>(this->mapped->data()), this->mapped->size(), cudaHostRegisterPortable));
+        gpu_runtime::check(gpu_runtime::hostRegister(
+            const_cast<char *>(this->mapped->data()), this->mapped->size(), gpu_runtime::HostRegisterPortable));
         this->hostRegistered = true;
         this->memoryPinned   = true;
     };
     auto methodMio = [&]() {
         this->mapped = std::make_unique<MMapImplMio>(filename);
-        checkCUDA(cudaHostRegister(const_cast<char *>(this->mapped->data()),
-                                   this->mapped->size(),
-                                   cudaHostRegisterPortable | cudaHostRegisterReadOnly));
+        gpu_runtime::check(gpu_runtime::hostRegister(const_cast<char *>(this->mapped->data()),
+                                                     this->mapped->size(),
+                                                     gpu_runtime::HostRegisterPortable |
+                                                         gpu_runtime::HostRegisterReadOnly));
         this->hostRegistered = true;
         this->memoryPinned   = true;
     };
@@ -183,8 +184,9 @@ SafeTensors::SafeTensors(const std::string &filename) {
 
 SafeTensors::~SafeTensors() {
     if (this->hostRegistered) {
-        if (cudaHostUnregister(const_cast<char *>(this->mapped->data())) != cudaSuccess) {
-            spdlog::warn("cudaHostUnregister failed: {}", cudaGetErrorString(cudaGetLastError()));
+        if (gpu_runtime::hostUnregister(const_cast<char *>(this->mapped->data())) != gpu_runtime::success) {
+            spdlog::warn("hostUnregister failed: {}",
+                         gpu_runtime::getErrorString(gpu_runtime::getLastError()));
         }
     }
 }

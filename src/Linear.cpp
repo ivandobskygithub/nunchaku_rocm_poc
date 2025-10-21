@@ -5,7 +5,7 @@
 #include "kernels/awq/gemv_awq.h"
 #include "kernels/dwconv.h"
 
-#include <nvtx3/nvToolsExt.h>
+#include "nvtx_utils.h"
 
 using namespace nunchaku;
 
@@ -117,7 +117,7 @@ GEMM_W4A4::GEMM_W4A4(
         wtscale, "wtscale", ParamFlags::Optional)(wcscales, "wcscales", ParamFlags::Optional);
 
 #if NO_LORA_FUSION
-    checkCUBLAS(cublasCreate(&handle));
+    gpu_blas::check(gpu_blas::create(&handle));
 #endif
 }
 
@@ -242,15 +242,15 @@ void GEMM_W4A4::forward(Tensor x,
                        qact.is_unsigned,
                        this->lora_scales);
 
-    nvtxRangePushA("LoraUp");
+    NUNCHAKU_NVTX_PUSH_RANGE("LoraUp");
 
     static const half one  = 1.0;
     static const half zero = 0.0;
     // lora_up: [M, R] * [OC, R] => [M, OC]
     // cublas view: [OC, R] * [M, R]^T
-    checkCUBLAS(cublasHgemm(handle,
-                            CUBLAS_OP_T,
-                            CUBLAS_OP_N,
+    gpu_blas::check(gpu_blas::hgemm(handle,
+                            gpu_blas::OperationT,
+                            gpu_blas::OperationN,
                             this->out_features,
                             M,
                             this->lora_rank,
@@ -263,7 +263,7 @@ void GEMM_W4A4::forward(Tensor x,
                             out.data_ptr<half>(),
                             this->out_features));
 
-    nvtxRangePop();
+    NUNCHAKU_NVTX_POP_RANGE();
 #endif
 }
 
@@ -380,7 +380,7 @@ GEMM_W4A4::forward_quant(QuantizedActivation qact, FuseOptions fuse, GEMM_W4A4 *
                        qact.is_unsigned,
                        this->lora_scales);
 
-    nvtxRangePushA("LoraUp");
+    NUNCHAKU_NVTX_PUSH_RANGE("LoraUp");
 
     static const half one  = 1.0;
     static const half zero = 0.0;
@@ -388,9 +388,9 @@ GEMM_W4A4::forward_quant(QuantizedActivation qact, FuseOptions fuse, GEMM_W4A4 *
     // lora_up: [M, R] * [OC, R]^T => [M, OC]
     // cublas view: [R, OC]^T * [R, M] => [OC, M]
     // lora_up layout wrong?
-    checkCUBLAS(cublasHgemm(handle,
-                            CUBLAS_OP_T,
-                            CUBLAS_OP_N,
+    gpu_blas::check(gpu_blas::hgemm(handle,
+                            gpu_blas::OperationT,
+                            gpu_blas::OperationN,
                             this->out_features,
                             M,
                             this->lora_rank,
@@ -403,16 +403,16 @@ GEMM_W4A4::forward_quant(QuantizedActivation qact, FuseOptions fuse, GEMM_W4A4 *
                             out.data_ptr<half>(),
                             this->out_features));
 
-    nvtxRangePop();
+    NUNCHAKU_NVTX_POP_RANGE();
 
     if (fuse == FuseOptions::GELU_QUANT) {
-        nvtxRangePushA("LoraDown");
+        NUNCHAKU_NVTX_PUSH_RANGE("LoraDown");
         // IC is for next lora (OC of this layer)
         // lora_down: [M, IC] * [IC, R] => [M, R]
         // cublas view: [R, IC] * [IC, M] => [R, M]
-        checkCUBLAS(cublasHgemm(handle,
-                                CUBLAS_OP_N,
-                                CUBLAS_OP_N,
+        gpu_blas::check(gpu_blas::hgemm(handle,
+                                gpu_blas::OperationN,
+                                gpu_blas::OperationN,
                                 this->lora_rank,
                                 M,
                                 this->out_features,
@@ -427,7 +427,7 @@ GEMM_W4A4::forward_quant(QuantizedActivation qact, FuseOptions fuse, GEMM_W4A4 *
 
         out = {};
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
     }
 
 #endif
@@ -473,13 +473,13 @@ GEMM_W4A4::QuantizedActivation GEMM_W4A4::quantize(Tensor x, bool fuse_glu) {
     static const half one  = 1.0;
     static const half zero = 0.0;
 
-    nvtxRangePushA("LoraDown");
+    NUNCHAKU_NVTX_PUSH_RANGE("LoraDown");
 
     // lora_down: [M, IC] * [IC, R] => [M, R]
     // cublas view: [R, IC] * [IC, M]
-    checkCUBLAS(cublasHgemm(handle,
-                            CUBLAS_OP_N,
-                            CUBLAS_OP_N,
+    gpu_blas::check(gpu_blas::hgemm(handle,
+                            gpu_blas::OperationN,
+                            gpu_blas::OperationN,
                             this->lora_rank,
                             M,
                             this->in_features,
@@ -492,7 +492,7 @@ GEMM_W4A4::QuantizedActivation GEMM_W4A4::quantize(Tensor x, bool fuse_glu) {
                             qact.lora_act.data_ptr<half>(),
                             this->lora_rank));
 
-    nvtxRangePop();
+    NUNCHAKU_NVTX_POP_RANGE();
 
     kernels::quantize_w4a4_act(x, qact.act, qact.ascales);
 
