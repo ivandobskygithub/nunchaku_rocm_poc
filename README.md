@@ -84,6 +84,7 @@ https://github.com/user-attachments/assets/fdd4ab68-6489-4c65-8768-259bd866e8f8
 - [Contribution Guide](https://nunchaku.tech/docs/nunchaku/developer/contribution_guide.html)
 - [Frequently Asked Questions](https://nunchaku.tech/docs/nunchaku/faq/faq.html)
 - [Windows ROCm 7 Setup (AMD AI Pro R9700)](docs/windows_rocm_setup.md)
+- [ROCm 7 Windows build & validation checklist](docs/rocm7_windows_setup.md)
 - [Windows ROCm CI Pipeline](docs/rocm_ci.md)
 
 ## Contact Us
