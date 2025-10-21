@@ -2,13 +2,19 @@
 
 #include "common.h"
 #include "Tensor.h"
-#include <cuda_fp16.h>
+#include "device_compat.h"
+
+#if defined(__HIP_PLATFORM_AMD__)
+#include <rocblaslt/rocblaslt.h>
+#endif
 
 template<typename F>
 inline auto dispatchFloat(Tensor::ScalarType scalarType, F &&func) {
     switch (scalarType) {
+#ifdef ENABLE_BF16
     case Tensor::BF16:
         return func.template operator()<__nv_bfloat16>();
+#endif
     case Tensor::FP16:
         return func.template operator()<half>();
     case Tensor::FP32:
@@ -22,8 +28,10 @@ inline auto dispatchFloat(Tensor::ScalarType scalarType, F &&func) {
 template<typename F>
 inline auto dispatchFloat16(Tensor::ScalarType scalarType, F &&func) {
     switch (scalarType) {
+#ifdef ENABLE_BF16
     case Tensor::BF16:
         return func.template operator()<__nv_bfloat16>();
+#endif
     case Tensor::FP16:
         return func.template operator()<half>();
     default:
@@ -35,8 +43,10 @@ inline auto dispatchFloat16(Tensor::ScalarType scalarType, F &&func) {
 template<typename F>
 inline auto dispatch(Tensor::ScalarType scalarType, F &&func) {
     switch (scalarType) {
+#ifdef ENABLE_BF16
     case Tensor::BF16:
         return func.template operator()<__nv_bfloat16>();
+#endif
     case Tensor::FP16:
         return func.template operator()<half>();
     case Tensor::FP32:

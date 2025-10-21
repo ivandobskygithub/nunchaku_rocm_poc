@@ -6,22 +6,23 @@
 #include <cstdint>
 #include <cfloat>
 #include <type_traits>
+#include <cmath>
 
 #include <cstdio>
 
-#include <cuda_fp16.h>
-
-#ifdef ENABLE_BF16
-#include <cuda_bf16.h>
-#endif
+#include "device_compat.h"
 
 __device__ __forceinline__ static void trap_unsupported_arch() {
     if (blockIdx.x == 0 && blockIdx.y == 0 && threadIdx.x == 0) {
         printf("This kernel is not supported on your GPU\n");
     }
     __syncthreads();
+#if defined(__HIP_PLATFORM_AMD__)
+    __builtin_trap();
+#else
     __nanosleep(1000000);
     __trap();
+#endif
 }
 
 #if defined(ENABLE_BF16) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 800
@@ -155,9 +156,15 @@ inline __device__ float2 operator-(float2 a, float b) {
 }
 
 static inline __device__ int8_t float_to_int8_rn(float x) {
+#if defined(__HIP_PLATFORM_AMD__)
+    float clamped = fmaxf(fminf(x, 127.0f), -128.0f);
+    int   rounded = static_cast<int>(nearbyintf(clamped));
+    return static_cast<int8_t>(rounded);
+#else
     uint32_t dst;
     asm volatile("cvt.rni.sat.s8.f32 %0, %1;" : "=r"(dst) : "f"(x));
     return reinterpret_cast<const int8_t &>(dst);
+#endif
 }
 
 template<typename T>
@@ -256,76 +263,44 @@ __device__ inline half2 cuda_cast<half2, half>(half val) {
 
 template<>
 __device__ inline int8_t cuda_cast<int8_t, half>(half val) {
-    union {
-        int8_t int8[2];
-        int16_t int16;
-    };
-
-    union {
-        half fp16;
-        int16_t int16_in;
-    };
-
-    fp16 = val;
-    asm volatile("cvt.rni.sat.s8.f16 %0, %1;" : "=h"(int16) : "h"(int16_in));
-    return int8[0];
+    return float_to_int8_rn(__half2float(val));
 }
 
 template<>
 __device__ inline int16_t cuda_cast<int16_t, half2>(half2 val) {
-    union {
-        int8_t int8[2];
-        int16_t int16;
-    };
-
-    int8[0] = cuda_cast<int8_t>(val.x);
-    int8[1] = cuda_cast<int8_t>(val.y);
-    return int16;
+    int16_t result = 0;
+    auto *bytes    = reinterpret_cast<int8_t *>(&result);
+    bytes[0]       = cuda_cast<int8_t>(val.x);
+    bytes[1]       = cuda_cast<int8_t>(val.y);
+    return result;
 }
 
 template<>
 __device__ inline int8_t cuda_cast<int8_t, float>(float val) {
-    union {
-        int8_t int8[2];
-        int16_t int16;
-    };
-
-    asm volatile("cvt.rni.sat.s8.f32 %0, %1;" : "=h"(int16) : "f"(val));
-    return int8[0];
+    return float_to_int8_rn(val);
 }
 
 template<>
 __device__ inline int16_t cuda_cast<int16_t, float2>(float2 val) {
-    union {
-        int8_t int8[2];
-        int16_t int16;
-    };
-
-    int8[0] = cuda_cast<int8_t>(val.x);
-    int8[1] = cuda_cast<int8_t>(val.y);
-    return int16;
+    int16_t result = 0;
+    auto *bytes    = reinterpret_cast<int8_t *>(&result);
+    bytes[0]       = cuda_cast<int8_t>(val.x);
+    bytes[1]       = cuda_cast<int8_t>(val.y);
+    return result;
 }
 
 template<>
 __device__ inline half2 cuda_cast<half2, int16_t>(int16_t val) {
-    union {
-        int8_t int8[2];
-        int16_t int16;
-    };
-
-    int16 = val;
-    return make_half2(int8[0], int8[1]);
+    auto *bytes = reinterpret_cast<int8_t *>(&val);
+    half h0     = __float2half(static_cast<float>(bytes[0]));
+    half h1     = __float2half(static_cast<float>(bytes[1]));
+    return __halves2half2(h0, h1);
 }
 
 template<>
 __device__ inline float2 cuda_cast<float2, int16_t>(int16_t val) {
-    union {
-        int8_t int8[2];
-        int16_t int16;
-    };
-
-    int16 = val;
-    return make_float2(int8[0], int8[1]);
+    auto *bytes = reinterpret_cast<int8_t *>(&val);
+    return make_float2(bytes[0], bytes[1]);
 }
 
 #ifdef ENABLE_BF16

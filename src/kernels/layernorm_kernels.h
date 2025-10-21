@@ -2,7 +2,7 @@
 
 #include "common.h"
 #include "Tensor.h"
-#include <cuda_fp16.h>
+#include "device_compat.h"
 
 void rms_norm(Tensor &out,    // [num_tokens, hidden_size]
               Tensor &input,  // [num_tokens, hidden_size]

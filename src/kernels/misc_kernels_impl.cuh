@@ -1,13 +1,24 @@
 #include "reduction_utils.cuh"
 #include <array>
 
-#include <cuda_fp16.h>
-#include <cuda_bf16.h>
+#include "device_compat.h"
 
 #include "utils.cuh"
 #include "activation_kernels_impl.cuh"
 
 namespace nunchaku::kernels {
+
+template<typename T>
+__device__ __forceinline__ T clamp_to_f16_range(T value) {
+    return value;
+}
+
+template<>
+__device__ __forceinline__ half clamp_to_f16_range(half value) {
+    float f = __half2float(value);
+    f      = fmaxf(fminf(f, 65504.0f), -65504.0f);
+    return __float2half(f);
+}
 
 template<typename T>
 __global__ void add_kernel(T *a, T *b, T *c, size_t length) {
@@ -58,10 +69,10 @@ __global__ void mul_add_kernel(T *x,
             tmp = rx.data[k] * (rscale.data[k] + scale_shift) + rbias.data[k];
         }
         if constexpr (std::is_same_v<T, half>) {
-            tmp = __hmin(tmp, (half)65504);
-            tmp = __hmax(tmp, (half)-65504);
+            rx.data[k] = clamp_to_f16_range(tmp);
+        } else {
+            rx.data[k] = tmp;
         }
-        rx.data[k] = tmp;
     }
 
     *reinterpret_cast<Tvec *>(&x[i + batch_stride_x * batch_id]) = rx;
@@ -194,8 +205,7 @@ __global__ void cast_kernel(const Tin *input, Tout *output, size_t length) {
     for (int k = 0; k < unroll; k++) {
         routput.data[k] = cuda_cast<Tout, Tin>(rinput.data[k]);
         if constexpr (std::is_same_v<Tout, half>) {
-            routput.data[k] = __hmin(routput.data[k], (half)65504);
-            routput.data[k] = __hmax(routput.data[k], (half)-65504);
+            routput.data[k] = clamp_to_f16_range(routput.data[k]);
         }
     }
 

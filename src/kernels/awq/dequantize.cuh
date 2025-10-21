@@ -11,7 +11,7 @@ https://github.com/NVIDIA/FasterTransformer/blob/main/src/fastertransformer/cutl
 */
 #pragma once
 
-#include <cuda_fp16.h>
+#include "../device_compat.h"
 #include <cstdint>
 
 __forceinline__ __device__ void dequantize_s4_to_fp16x2(half2 const &source, uint4 *result) {
