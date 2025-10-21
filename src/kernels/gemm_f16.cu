@@ -111,7 +111,7 @@ Tensor gemm_f16(Tensor input,  // FP16
         // Allocate workspace memory
         // cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
 
-        BufferCUDA workspace(workspace_size);
+        BufferGPU workspace(workspace_size);
 
         // Check the problem size is supported or not
         cutlass::Status status = gemm_op.can_implement(arguments);

@@ -10,12 +10,21 @@ public:
     BufferTorchTensor(at::Tensor tensor) : tensor(std::move(tensor)) {
         this->size        = this->tensor.numel() * this->tensor.itemsize();
         this->ptr         = this->tensor.data_ptr();
-        this->device.type = this->tensor.is_cuda() ? Device::CUDA : Device::CPU;
-        this->device.idx  = this->tensor.get_device();
+        const int deviceIdx = this->tensor.device().has_index() ? this->tensor.device().index() : 0;
+        if (this->tensor.device().is_cuda()) {
+            this->device = Device::cuda(deviceIdx);
+#if defined(NUNCHAKU_USE_HIP)
+        } else if (this->tensor.device().type() == c10::DeviceType::HIP) {
+            this->device = Device::rocm(deviceIdx);
+#endif
+        } else {
+            this->device = Device::cpu();
+        }
+        this->device.idx = deviceIdx;
     }
     virtual bool isAsyncBuffer() override {
         // TODO: figure out how torch manages memory
-        return this->device.type == Device::CUDA;
+        return this->device.is_gpu();
     }
 
 private:

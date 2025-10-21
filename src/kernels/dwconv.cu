@@ -113,7 +113,7 @@ static cutlass::Status depthwise_conv2d_kernel_run(cutlass::conv::Conv2dProblemS
 
     size_t workspace_size = implicit_gemm_op.get_workspace_size(arguments);
 
-    BufferCUDA workspace(workspace_size);
+    BufferGPU workspace(workspace_size);
 
     cutlass::Status status = implicit_gemm_op.can_implement(arguments);
     if (status != cutlass::Status::kSuccess) {
@@ -183,7 +183,7 @@ Tensor depthwise_conv2d_kernel(Tensor A, Tensor B) {
 
     Tensor D = Tensor::allocate({N, P, Q, K}, A.dtype(), A.device());
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     cutlass::Status status = depthwise_conv2d_kernel_run(
         &problem_size,
@@ -318,8 +318,8 @@ Tensor dwconv_f16(Tensor input, Tensor weight, Tensor out, Tensor bias) {
 
         size_t workspace_size = implicit_gemm_op.get_workspace_size(arguments);
 
-        BufferCUDA workspace(workspace_size);
-        auto stream = getCurrentCUDAStream();
+        BufferGPU workspace(workspace_size);
+        auto stream = getCurrentGpuStream();
 
         cutlass::Status status = implicit_gemm_op.can_implement(arguments);
         if (status != cutlass::Status::kSuccess) {

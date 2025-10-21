@@ -4,7 +4,7 @@
 #include "kernels/zgemm/zgemm.h"
 #include "flash_api.h"
 #include "activation.h"
-#include <nvtx3/nvToolsExt.h>
+#include "nvtx_utils.h"
 
 #include <pybind11/functional.h>
 
@@ -296,7 +296,7 @@ FluxSingleTransformerBlock::FluxSingleTransformerBlock(int dim,
 
 Tensor FluxSingleTransformerBlock::forward(Tensor hidden_states, Tensor temb, Tensor rotary_emb) {
 
-    nvtxRangePushA("FluxSingleTransformerBlock");
+    NUNCHAKU_NVTX_PUSH_RANGE("FluxSingleTransformerBlock");
 
     const int batch_size = hidden_states.shape[0];
     const int num_tokens = hidden_states.shape[1];
@@ -370,14 +370,14 @@ Tensor FluxSingleTransformerBlock::forward(Tensor hidden_states, Tensor temb, Te
             attn_output = o.slice(1, 0, num_tokens);
         } else {
             attn_output = Tensor::allocate({batch_size, num_tokens, num_heads * dim_head}, o.scalar_type(), o.device());
-            checkCUDA(cudaMemcpy2DAsync(attn_output.data_ptr(),
+            gpu_runtime::check(gpu_runtime::memcpy2DAsync(attn_output.data_ptr(),
                                         attn_output.stride(0) * attn_output.scalar_size(),
                                         o.data_ptr(),
                                         o.stride(0) * o.scalar_size(),
                                         attn_output.stride(0) * attn_output.scalar_size(),
                                         batch_size,
-                                        cudaMemcpyDeviceToDevice,
-                                        getCurrentCUDAStream()));
+                                        gpu_runtime::MemcpyDeviceToDevice,
+                                        getCurrentGpuStream()));
         }
     } else {
         assert(false);
@@ -397,7 +397,7 @@ Tensor FluxSingleTransformerBlock::forward(Tensor hidden_states, Tensor temb, Te
     // kernels::mul_add(hidden_states, gate, residual);
     kernels::mul_add_batch(hidden_states, gate, true, 0.0, residual, true);
 
-    nvtxRangePop();
+    NUNCHAKU_NVTX_POP_RANGE();
 
     return hidden_states;
 }
@@ -439,9 +439,9 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
     int batch_size = hidden_states.shape[0];
     assert(encoder_hidden_states.shape[0] == batch_size);
 
-    nvtxRangePushA("JointTransformerBlock");
+    NUNCHAKU_NVTX_PUSH_RANGE("JointTransformerBlock");
 
-    nvtxRangePushA("AdaNorm");
+    NUNCHAKU_NVTX_PUSH_RANGE("AdaNorm");
 
     int num_tokens_img = hidden_states.shape[1];
     int num_tokens_txt = encoder_hidden_states.shape[1];
@@ -468,9 +468,9 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
 
     constexpr int POOL_SIZE = Attention::POOL_SIZE;
 
-    nvtxRangePop();
+    NUNCHAKU_NVTX_POP_RANGE();
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     int num_tokens_img_pad = 0, num_tokens_txt_pad = 0;
     Tensor raw_attn_output;
@@ -483,7 +483,7 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
         Tensor pool;
 
         {
-            nvtxRangePushA("qkv_proj");
+            NUNCHAKU_NVTX_PUSH_RANGE("qkv_proj");
 
             const bool blockSparse = sparsityRatio > 0;
 
@@ -535,7 +535,7 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
                 debug("qkv_context", qkv_context);
             }
 
-            nvtxRangePop();
+            NUNCHAKU_NVTX_POP_RANGE();
         }
 
         spdlog::debug("concat={}", concat.shape.str());
@@ -543,7 +543,7 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
 
         assert(concat.shape[2] == num_heads * dim_head * 3);
 
-        nvtxRangePushA("Attention");
+        NUNCHAKU_NVTX_PUSH_RANGE("Attention");
 
         if (pool.valid()) {
             raw_attn_output = attn.forward(concat, pool, sparsityRatio);
@@ -551,7 +551,7 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
             raw_attn_output = attn.forward(concat);
         }
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
 
         spdlog::debug("raw_attn_output={}", raw_attn_output.shape.str());
 
@@ -564,7 +564,7 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
         Tensor concat_q, concat_k, concat_v;
 
         {
-            nvtxRangePushA("qkv_proj");
+            NUNCHAKU_NVTX_PUSH_RANGE("qkv_proj");
 
             concat_q = Tensor::allocate({batch_size, num_heads, num_tokens_img_pad + num_tokens_txt_pad, dim_head},
                                         Tensor::FP16,
@@ -606,18 +606,18 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
             debug("concat_k", concat_k);
             debug("concat_v", concat_v);
 
-            nvtxRangePop();
+            NUNCHAKU_NVTX_POP_RANGE();
         }
 
         raw_attn_output = Tensor::allocate({batch_size, num_tokens_img_pad + num_tokens_txt_pad, num_heads * dim_head},
                                            norm1_output.x.scalar_type(),
                                            norm1_output.x.device());
 
-        nvtxRangePushA("Attention");
+        NUNCHAKU_NVTX_PUSH_RANGE("Attention");
 
         kernels::attention_fp16(concat_q, concat_k, concat_v, raw_attn_output, pow(dim_head, (-0.5)));
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
 
         raw_attn_output =
             raw_attn_output.view({batch_size, num_tokens_img_pad + num_tokens_txt_pad, num_heads, dim_head});
@@ -628,7 +628,7 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
     debug("raw_attn_output", raw_attn_output);
 
     {
-        nvtxRangePushA("o_proj");
+        NUNCHAKU_NVTX_PUSH_RANGE("o_proj");
 
         auto &&[_, gate_msa, shift_mlp, scale_mlp, gate_mlp] = norm1_output;
 
@@ -642,14 +642,14 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
             raw_attn_output_split = Tensor::allocate({batch_size, num_tokens_img, num_heads * dim_head},
                                                      raw_attn_output.scalar_type(),
                                                      raw_attn_output.device());
-            checkCUDA(cudaMemcpy2DAsync(raw_attn_output_split.data_ptr(),
+            gpu_runtime::check(gpu_runtime::memcpy2DAsync(raw_attn_output_split.data_ptr(),
                                         num_tokens_img * num_heads * dim_head * raw_attn_output_split.scalar_size(),
                                         raw_attn_output.data_ptr(),
                                         (num_tokens_img_pad + num_tokens_txt_pad) * num_heads * dim_head *
                                             raw_attn_output.scalar_size(),
                                         num_tokens_img * num_heads * dim_head * raw_attn_output_split.scalar_size(),
                                         batch_size,
-                                        cudaMemcpyDeviceToDevice,
+                                        gpu_runtime::MemcpyDeviceToDevice,
                                         stream));
         }
 
@@ -665,8 +665,8 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
         kernels::mul_add_batch(attn_output, gate_msa, true, 0.0, hidden_states, true);
         hidden_states = std::move(attn_output);
 
-        nvtxRangePop();
-        nvtxRangePushA("MLP");
+        NUNCHAKU_NVTX_POP_RANGE();
+        NUNCHAKU_NVTX_PUSH_RANGE("MLP");
 
         spdlog::debug("attn_output={}", hidden_states.shape.str());
 
@@ -691,7 +691,7 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
         kernels::mul_add_batch(ff_output, gate_mlp, true, 0.0, hidden_states, true);
         hidden_states = std::move(ff_output);
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
 
         spdlog::debug("ff_output={}", hidden_states.shape.str());
     }
@@ -701,7 +701,7 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
     }
 
     {
-        nvtxRangePushA("o_proj_context");
+        NUNCHAKU_NVTX_PUSH_RANGE("o_proj_context");
 
         auto &&[_, gate_msa, shift_mlp, scale_mlp, gate_mlp] = norm1_context_output;
 
@@ -713,7 +713,7 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
             raw_attn_output_split = Tensor::allocate({batch_size, num_tokens_txt, num_heads * dim_head},
                                                      raw_attn_output.scalar_type(),
                                                      raw_attn_output.device());
-            checkCUDA(cudaMemcpy2DAsync(raw_attn_output_split.data_ptr(),
+            gpu_runtime::check(gpu_runtime::memcpy2DAsync(raw_attn_output_split.data_ptr(),
                                         num_tokens_txt * num_heads * dim_head * raw_attn_output_split.scalar_size(),
                                         raw_attn_output.data_ptr<char>() + num_tokens_img_pad * num_heads * dim_head *
                                                                                raw_attn_output_split.scalar_size(),
@@ -721,7 +721,7 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
                                             raw_attn_output.scalar_size(),
                                         num_tokens_txt * num_heads * dim_head * raw_attn_output_split.scalar_size(),
                                         batch_size,
-                                        cudaMemcpyDeviceToDevice,
+                                        gpu_runtime::MemcpyDeviceToDevice,
                                         stream));
         }
 
@@ -738,8 +738,8 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
         kernels::mul_add_batch(attn_output, gate_msa, true, 0.0, encoder_hidden_states, true);
         encoder_hidden_states = std::move(attn_output);
 
-        nvtxRangePop();
-        nvtxRangePushA("MLP");
+        NUNCHAKU_NVTX_POP_RANGE();
+        NUNCHAKU_NVTX_PUSH_RANGE("MLP");
 
         spdlog::debug("attn_output={}", encoder_hidden_states.shape.str());
 
@@ -766,12 +766,12 @@ std::tuple<Tensor, Tensor> JointTransformerBlock::forward(Tensor hidden_states,
         kernels::mul_add_batch(ff_output, gate_mlp, true, 0.0, encoder_hidden_states, true);
         encoder_hidden_states = std::move(ff_output);
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
 
         spdlog::debug("ff_output={}", encoder_hidden_states.shape.str());
     }
 
-    nvtxRangePop();
+    NUNCHAKU_NVTX_POP_RANGE();
 
     return {hidden_states, encoder_hidden_states};
 }
@@ -831,12 +831,12 @@ Tensor JointTransformerBlock::get_q_heads(Tensor hidden_states,
         size_t width     = C * E;
         size_t height    = R;
         Tensor out       = Tensor::allocate({B, R, C}, t.scalarType, t.device());
-        auto stream      = getCurrentCUDAStream();
+        auto stream      = getCurrentGpuStream();
         for (int b = 0; b < B; ++b) {
             const void *src = (const char *)t.data_ptr<char>() + t.stride(0) * b * E;
             void *dst       = (char *)out.data_ptr<char>() + out.stride(0) * b * E;
-            checkCUDA(
-                cudaMemcpy2DAsync(dst, dst_pitch, src, src_pitch, width, height, cudaMemcpyDeviceToDevice, stream));
+            gpu_runtime::check(
+                gpu_runtime::memcpy2DAsync(dst, dst_pitch, src, src_pitch, width, height, gpu_runtime::MemcpyDeviceToDevice, stream));
         }
         return out;
     };
@@ -852,9 +852,9 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
     int batch_size = hidden_states.shape[0];
     assert(encoder_hidden_states.shape[0] == batch_size);
 
-    nvtxRangePushA("JointTransformerBlock");
+    NUNCHAKU_NVTX_PUSH_RANGE("JointTransformerBlock");
 
-    nvtxRangePushA("AdaNorm");
+    NUNCHAKU_NVTX_PUSH_RANGE("AdaNorm");
 
     int num_tokens_img = hidden_states.shape[1];
     int num_tokens_txt = encoder_hidden_states.shape[1];
@@ -877,12 +877,12 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
 
         Tensor out = Tensor::allocate({B, R, C}, t.scalarType, t.device());
 
-        auto stream = getCurrentCUDAStream();
+        auto stream = getCurrentGpuStream();
         for (int b = 0; b < B; ++b) {
             const void *src = (const char *)t.data_ptr<char>() + t.stride(0) * b * E;
             void *dst       = (char *)out.data_ptr<char>() + out.stride(0) * b * E;
-            checkCUDA(
-                cudaMemcpy2DAsync(dst, dst_pitch, src, src_pitch, width, height, cudaMemcpyDeviceToDevice, stream));
+            gpu_runtime::check(
+                gpu_runtime::memcpy2DAsync(dst, dst_pitch, src, src_pitch, width, height, gpu_runtime::MemcpyDeviceToDevice, stream));
         }
         return out;
     };
@@ -906,9 +906,9 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
 
     constexpr int POOL_SIZE = Attention::POOL_SIZE;
 
-    nvtxRangePop();
+    NUNCHAKU_NVTX_POP_RANGE();
 
-    auto stream = getCurrentCUDAStream();
+    auto stream = getCurrentGpuStream();
 
     int num_tokens_img_pad = 0, num_tokens_txt_pad = 0;
     Tensor raw_attn_output;
@@ -921,7 +921,7 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
         Tensor pool;
 
         {
-            nvtxRangePushA("qkv_proj");
+            NUNCHAKU_NVTX_PUSH_RANGE("qkv_proj");
 
             const bool blockSparse = sparsityRatio > 0;
 
@@ -973,7 +973,7 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
                 debug("qkv_context", qkv_context);
             }
 
-            nvtxRangePop();
+            NUNCHAKU_NVTX_POP_RANGE();
         }
 
         spdlog::debug("concat={}", concat.shape.str());
@@ -981,7 +981,7 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
 
         assert(concat.shape[2] == num_heads * dim_head * 3);
 
-        nvtxRangePushA("Attention");
+        NUNCHAKU_NVTX_PUSH_RANGE("Attention");
 
         if (pool.valid()) {
             raw_attn_output = attn.forward(concat, pool, sparsityRatio);
@@ -989,7 +989,7 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
             raw_attn_output = attn.forward(concat);
         }
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
 
         spdlog::debug("raw_attn_output={}", raw_attn_output.shape.str());
 
@@ -1009,7 +1009,7 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
         Tensor concat_q, concat_k, concat_v;
 
         {
-            nvtxRangePushA("qkv_proj");
+            NUNCHAKU_NVTX_PUSH_RANGE("qkv_proj");
 
             concat_q = Tensor::allocate({batch_size, num_heads, num_tokens_img_pad + num_tokens_txt_pad, dim_head},
                                         Tensor::FP16,
@@ -1051,18 +1051,18 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
             debug("concat_k", concat_k);
             debug("concat_v", concat_v);
 
-            nvtxRangePop();
+            NUNCHAKU_NVTX_POP_RANGE();
         }
 
         raw_attn_output = Tensor::allocate({batch_size, num_tokens_img_pad + num_tokens_txt_pad, num_heads * dim_head},
                                            norm1_output.x.scalar_type(),
                                            norm1_output.x.device());
 
-        nvtxRangePushA("Attention");
+        NUNCHAKU_NVTX_PUSH_RANGE("Attention");
 
         kernels::attention_fp16(concat_q, concat_k, concat_v, raw_attn_output, pow(dim_head, (-0.5)));
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
 
         raw_attn_output =
             raw_attn_output.view({batch_size, num_tokens_img_pad + num_tokens_txt_pad, num_heads, dim_head});
@@ -1075,7 +1075,7 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
     debug("raw_attn_output", raw_attn_output);
 
     {
-        nvtxRangePushA("o_proj");
+        NUNCHAKU_NVTX_PUSH_RANGE("o_proj");
 
         auto &&[_, gate_msa, shift_mlp, scale_mlp, gate_mlp] = norm1_output;
 
@@ -1089,14 +1089,14 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
             raw_attn_output_split = Tensor::allocate({batch_size, num_tokens_img, num_heads * dim_head},
                                                      raw_attn_output.scalar_type(),
                                                      raw_attn_output.device());
-            checkCUDA(cudaMemcpy2DAsync(raw_attn_output_split.data_ptr(),
+            gpu_runtime::check(gpu_runtime::memcpy2DAsync(raw_attn_output_split.data_ptr(),
                                         num_tokens_img * num_heads * dim_head * raw_attn_output_split.scalar_size(),
                                         raw_attn_output.data_ptr(),
                                         (num_tokens_img_pad + num_tokens_txt_pad) * num_heads * dim_head *
                                             raw_attn_output.scalar_size(),
                                         num_tokens_img * num_heads * dim_head * raw_attn_output_split.scalar_size(),
                                         batch_size,
-                                        cudaMemcpyDeviceToDevice,
+                                        gpu_runtime::MemcpyDeviceToDevice,
                                         stream));
         }
 
@@ -1112,8 +1112,8 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
         kernels::mul_add_batch(attn_output, gate_msa, true, 0.0, hidden_states, true);
         hidden_states = std::move(attn_output);
 
-        nvtxRangePop();
-        nvtxRangePushA("MLP");
+        NUNCHAKU_NVTX_POP_RANGE();
+        NUNCHAKU_NVTX_PUSH_RANGE("MLP");
 
         spdlog::debug("attn_output={}", hidden_states.shape.str());
 
@@ -1138,7 +1138,7 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
         kernels::mul_add_batch(ff_output, gate_mlp, true, 0.0, hidden_states, true);
         hidden_states = std::move(ff_output);
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
 
         spdlog::debug("ff_output={}", hidden_states.shape.str());
     }
@@ -1148,7 +1148,7 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
     }
 
     {
-        nvtxRangePushA("o_proj_context");
+        NUNCHAKU_NVTX_PUSH_RANGE("o_proj_context");
 
         auto &&[_, gate_msa, shift_mlp, scale_mlp, gate_mlp] = norm1_context_output;
 
@@ -1160,7 +1160,7 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
             raw_attn_output_split = Tensor::allocate({batch_size, num_tokens_txt, num_heads * dim_head},
                                                      raw_attn_output.scalar_type(),
                                                      raw_attn_output.device());
-            checkCUDA(cudaMemcpy2DAsync(raw_attn_output_split.data_ptr(),
+            gpu_runtime::check(gpu_runtime::memcpy2DAsync(raw_attn_output_split.data_ptr(),
                                         num_tokens_txt * num_heads * dim_head * raw_attn_output_split.scalar_size(),
                                         raw_attn_output.data_ptr<char>() + num_tokens_img_pad * num_heads * dim_head *
                                                                                raw_attn_output_split.scalar_size(),
@@ -1168,7 +1168,7 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
                                             raw_attn_output.scalar_size(),
                                         num_tokens_txt * num_heads * dim_head * raw_attn_output_split.scalar_size(),
                                         batch_size,
-                                        cudaMemcpyDeviceToDevice,
+                                        gpu_runtime::MemcpyDeviceToDevice,
                                         stream));
         }
 
@@ -1185,8 +1185,8 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
         kernels::mul_add_batch(attn_output, gate_msa, true, 0.0, encoder_hidden_states, true);
         encoder_hidden_states = std::move(attn_output);
 
-        nvtxRangePop();
-        nvtxRangePushA("MLP");
+        NUNCHAKU_NVTX_POP_RANGE();
+        NUNCHAKU_NVTX_PUSH_RANGE("MLP");
 
         spdlog::debug("attn_output={}", encoder_hidden_states.shape.str());
 
@@ -1213,19 +1213,19 @@ std::tuple<Tensor, Tensor, Tensor> JointTransformerBlock::forward_ip_adapter_bra
         kernels::mul_add_batch(ff_output, gate_mlp, true, 0.0, encoder_hidden_states, true);
         encoder_hidden_states = std::move(ff_output);
 
-        nvtxRangePop();
+        NUNCHAKU_NVTX_POP_RANGE();
 
         spdlog::debug("ff_output={}", encoder_hidden_states.shape.str());
     }
 
-    nvtxRangePop();
+    NUNCHAKU_NVTX_POP_RANGE();
 
     return {hidden_states, encoder_hidden_states, q_heads};
 }
 
 FluxModel::FluxModel(bool use_fp4, bool offload, Tensor::ScalarType dtype, Device device)
     : dtype(dtype), offload(offload) {
-    CUDADeviceContext model_construction_ctx(device.idx);
+    GpuDeviceContext model_construction_ctx(device.idx);
 
     for (int i = 0; i < 19; i++) {
         transformer_blocks.push_back(

@@ -1,6 +1,20 @@
 #include "torch.h"
 
+#if defined(NUNCHAKU_USE_HIP)
+#include <ATen/hip/HIPContext.h>
+namespace torch_backend = at::hip;
+inline auto getCurrentTorchStream() {
+    return torch_backend::getCurrentHIPStream();
+}
+static constexpr const char *TorchDevicePrefix = "hip";
+#else
 #include <ATen/cuda/CUDAContext.h>
+namespace torch_backend = at::cuda;
+inline auto getCurrentTorchStream() {
+    return torch_backend::getCurrentCUDAStream();
+}
+static constexpr const char *TorchDevicePrefix = "cuda";
+#endif
 
 using spdlog::fmt_lib::format;
 
@@ -37,7 +51,7 @@ Tensor from_torch(at::Tensor input) {
     result.scalarType = mapType.at(input.scalar_type());
     result.buffer     = std::make_shared<BufferTorchTensor>(std::move(input));
 
-    Tensor::lockBuffer(result.buffer, getCurrentCUDAStream());
+    Tensor::lockBuffer(result.buffer, getCurrentGpuStream());
 
     return result;
 }
@@ -66,7 +80,7 @@ at::Tensor to_torch(Tensor input) {
     if (input.device().type == Device::CPU) {
         opts = opts.device("cpu");
     } else {
-        opts = opts.device(format("cuda:{}", input.device().idx));
+        opts = opts.device(format("{}:{}", TorchDevicePrefix, input.device().idx));
     }
 
     at::Tensor result = torch::empty(at::IntArrayRef(shape), opts);
@@ -76,10 +90,10 @@ at::Tensor to_torch(Tensor input) {
 }
 
 TorchOpContext::TorchOpContext() {
-    stackCUDAStreams.push(at::cuda::getCurrentCUDAStream().stream());
+    stackGpuStreams.push(getCurrentTorchStream().stream());
 }
 
 TorchOpContext::~TorchOpContext() {
-    assert(stackCUDAStreams.top() == at::cuda::getCurrentCUDAStream().stream());
-    stackCUDAStreams.pop();
+    assert(stackGpuStreams.top() == getCurrentTorchStream().stream());
+    stackGpuStreams.pop();
 }

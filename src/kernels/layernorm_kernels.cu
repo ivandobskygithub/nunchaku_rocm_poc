@@ -10,7 +10,7 @@ void rms_norm(Tensor &out,    // [..., hidden_size]
     int num_tokens  = input.numel() / hidden_size;
     dim3 grid(num_tokens);
     dim3 block(std::min(hidden_size, 1024));
-    const cudaStream_t stream = getCurrentCUDAStream();
+    const cudaStream_t stream = getCurrentGpuStream();
     VLLM_DISPATCH_FLOATING_TYPES(input.scalar_type(), "rms_norm_kernel", [&] {
         if (use_quant) {
             vllm::rms_norm_kernel<scalar_t, int8_t, true><<<grid, block, 0, stream>>>(out.data_ptr<int8_t>(),
@@ -39,7 +39,7 @@ void layernorm_general(Tensor out, Tensor input, Tensor weight, Tensor bias, flo
 
     size_t size_shmem = input.scalar_size() * hidden_size;
 
-    const cudaStream_t stream = getCurrentCUDAStream();
+    const cudaStream_t stream = getCurrentGpuStream();
     VLLM_DISPATCH_FLOATING_TYPES(input.scalar_type(), "generalLayerNorm", [&] {
         using T = typename packed_as<scalar_t, 2>::type;
         vllm::generalLayerNorm<T, half, true><<<grid, block, size_shmem, stream>>>(
@@ -69,7 +69,7 @@ void rms_norm_general(Tensor &out,     // [..., hidden_size]
     dim3 block(std::min(hidden_size, 1024));
     block.x = 32 * ((block.x + 31) / 32);
 
-    const cudaStream_t stream = getCurrentCUDAStream();
+    const cudaStream_t stream = getCurrentGpuStream();
     VLLM_DISPATCH_FLOATING_TYPES(input.scalar_type(), "generalLayerNorm", [&] {
         using T = scalar_t;
         if (use_per_token_quant) {
@@ -121,7 +121,7 @@ void rms_norm_general_fuse_sum(Tensor &out,       // [..., hidden_size]
     dim3 block(std::min(hidden_size, 1024));
     block.x = 32 * ((block.x + 31) / 32);
 
-    const cudaStream_t stream = getCurrentCUDAStream();
+    const cudaStream_t stream = getCurrentGpuStream();
     VLLM_DISPATCH_FLOATING_TYPES(input.scalar_type(), "generalLayerNorm_fuse_sum", [&] {
         using T = scalar_t;
         if (use_per_token_quant) {
@@ -176,7 +176,7 @@ void invoke_dequant_add_residual_rms_norm_quant(Tensor &out,      // [..., hidde
     int num_tokens  = input.numel() / hidden_size;
     dim3 grid(num_tokens);
     dim3 block(std::min(hidden_size, 1024));
-    const cudaStream_t stream = getCurrentCUDAStream();
+    const cudaStream_t stream = getCurrentGpuStream();
     VLLM_DISPATCH_FLOATING_TYPES(residual.scalar_type(), "dequant_add_residual_rms_norm_quant_kernel", [&] {
         vllm::dequant_add_residual_rms_norm_quant_kernel<scalar_t, half, false>
             <<<grid, block, 0, stream>>>(input.data_ptr<int32_t>(),
@@ -202,7 +202,7 @@ void invoke_dequant_add_residual_rms_norm_quant(Tensor &out,      // [..., hidde
     dim3 grid(num_tokens);
     dim3 block(std::min(hidden_size, 1024));
 
-    const cudaStream_t stream = getCurrentCUDAStream();
+    const cudaStream_t stream = getCurrentGpuStream();
     VLLM_DISPATCH_FLOATING_TYPES(residual.scalar_type(), "dequant_add_residual_rms_norm_quant_kernel", [&] {
         vllm::dequant_add_residual_rms_norm_quant_kernel<scalar_t, half *, true>
             <<<grid, block, 0, stream>>>(input.data_ptr<int32_t>(),

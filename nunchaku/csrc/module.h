@@ -13,7 +13,7 @@ public:
         this->deviceId = deviceId;
     }
     void reset() {
-        CUDADeviceContext ctx(this->deviceId);
+        GpuDeviceContext ctx(this->deviceId);
 
         debugContext.reset();
         net.reset();
@@ -25,7 +25,7 @@ public:
 
     void load(std::string path, bool partial = false) {
         checkModel();
-        CUDADeviceContext ctx(this->deviceId);
+        GpuDeviceContext ctx(this->deviceId);
 
         spdlog::info("{} weights from {}", partial ? "Loading partial" : "Loading", path);
 
@@ -38,7 +38,7 @@ public:
 
     void loadDict(std::map<std::string, torch::Tensor> dict, bool partial = false) {
         checkModel();
-        CUDADeviceContext ctx(this->deviceId);
+        GpuDeviceContext ctx(this->deviceId);
 
         spdlog::info("{} weights from pytorch", partial ? "Loading partial" : "Loading");
 
@@ -57,7 +57,7 @@ public:
     }
 
     auto getDebugResults() {
-        CUDADeviceContext ctx(this->deviceId);
+        GpuDeviceContext ctx(this->deviceId);
 
         std::map<std::string, torch::Tensor> result;
 

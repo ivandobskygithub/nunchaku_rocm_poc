@@ -21,8 +21,8 @@ public:
         };
 
         ModuleWrapper::init(deviceId);
-        CUDADeviceContext ctx(this->deviceId);
-        net = std::make_unique<SanaModel>(cfg, bf16 ? Tensor::BF16 : Tensor::FP16, Device::cuda((int)deviceId));
+        GpuDeviceContext ctx(this->deviceId);
+        net = std::make_unique<SanaModel>(cfg, bf16 ? Tensor::BF16 : Tensor::FP16, Device::gpu((int)deviceId));
     }
 
     torch::Tensor forward(torch::Tensor hidden_states,
@@ -36,7 +36,7 @@ public:
                           bool cfg,
                           bool skip_first_layer = false) {
         checkModel();
-        CUDADeviceContext ctx(deviceId);
+        GpuDeviceContext ctx(deviceId);
 
         spdlog::debug("QuantizedSanaModel forward");
 
@@ -74,7 +74,7 @@ public:
                                 bool pag,
                                 bool cfg) {
         checkModel();
-        CUDADeviceContext ctx(deviceId);
+        GpuDeviceContext ctx(deviceId);
 
         spdlog::debug("QuantizedSanaModel forward_layer {}", idx);
 
