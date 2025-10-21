@@ -21,7 +21,8 @@ void test_rmsnorm_rope(Tensor input, Tensor output, Tensor norm_q, Tensor norm_k
 
     auto func = invoke_kernel<kernel, typename kernel::Arguments>;
 
-    checkCUDA(cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, kernel::SHMEM_SIZE));
+    checkCUDA(gpu_runtime::funcSetAttribute(
+        func, gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize, kernel::SHMEM_SIZE));
 
     dim3 grid(M / GEMM::BLOCK_M, N / GEMM::BLOCK_N);
 
@@ -38,7 +39,7 @@ void test_rmsnorm_rope(Tensor input, Tensor output, Tensor norm_q, Tensor norm_k
                                        .rmsnorm_weight_k = norm_k.data_ptr<GEMM::half_t>(),
                                        .epsilon          = 1e-6,
                                    }});
-    checkCUDA(cudaGetLastError());
+    checkCUDA(gpu_runtime::getLastError());
 }
 
 void test_pack_qkv(Tensor input, Tensor out_q, Tensor out_k, Tensor out_v, int numTokens) {
@@ -59,7 +60,8 @@ void test_pack_qkv(Tensor input, Tensor out_q, Tensor out_k, Tensor out_v, int n
 
     auto func = invoke_kernel<kernel, typename kernel::Arguments>;
 
-    checkCUDA(cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, kernel::SHMEM_SIZE));
+    checkCUDA(gpu_runtime::funcSetAttribute(
+        func, gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize, kernel::SHMEM_SIZE));
 
     dim3 grid(M / GEMM::BLOCK_M, N / GEMM::BLOCK_N);
 
@@ -83,7 +85,7 @@ void test_pack_qkv(Tensor input, Tensor out_q, Tensor out_k, Tensor out_v, int n
                 .strideHead_v =
                     int(out_v.stride(1) * out_v.scalar_size() / sizeof(GEMM::EpiloguePackQKV::packed_qkv_t)),
             }});
-    checkCUDA(cudaGetLastError());
+    checkCUDA(gpu_runtime::getLastError());
 }
 
 }; // namespace nunchaku::kernels
