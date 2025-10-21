@@ -12,8 +12,8 @@ public:
         spdlog::info("Initializing QuantizedGEMM");
 
         size_t val = 0;
-        checkCUDA(cudaDeviceSetLimit(cudaLimitStackSize, 8192));
-        checkCUDA(cudaDeviceGetLimit(&val, cudaLimitStackSize));
+        checkCUDA(gpu_runtime::deviceSetLimit(gpu_runtime::LimitStackSize, 8192));
+        checkCUDA(gpu_runtime::deviceGetLimit(&val, gpu_runtime::LimitStackSize));
         spdlog::debug("Stack={}", val);
 
         net = std::make_unique<GEMM_W4A4>((int)in_features,

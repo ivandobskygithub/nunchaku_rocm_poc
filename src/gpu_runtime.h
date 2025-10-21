@@ -72,6 +72,26 @@ inline Error streamSynchronize(Stream stream) { return hipStreamSynchronize(stre
 inline Error getDeviceProperties(DeviceProp *prop, int device) {
     return hipGetDeviceProperties(prop, device);
 }
+using FunctionAttribute = hipFunction_attribute;
+inline constexpr FunctionAttribute FuncAttributeMaxDynamicSharedMemorySize =
+    hipFuncAttributeMaxDynamicSharedMemorySize;
+inline Error funcSetAttribute(const void *func, FunctionAttribute attr, int value) {
+    return hipFuncSetAttribute(func, attr, value);
+}
+using Limit = hipLimit_t;
+inline constexpr Limit LimitStackSize = hipLimitStackSize;
+inline Error deviceSetLimit(Limit limit, size_t value) { return hipDeviceSetLimit(limit, value); }
+inline Error deviceGetLimit(size_t *value, Limit limit) { return hipDeviceGetLimit(value, limit); }
+using MemPool     = hipMemPool_t;
+using MemPoolAttr = hipMemPoolAttr;
+inline constexpr MemPoolAttr MemPoolAttrReleaseThreshold = hipMemPoolAttrReleaseThreshold;
+inline Error deviceGetDefaultMemPool(MemPool *pool, int device) {
+    return hipDeviceGetDefaultMemPool(pool, device);
+}
+inline Error memPoolSetAttribute(MemPool pool, MemPoolAttr attr, void *value) {
+    return hipMemPoolSetAttribute(pool, attr, value);
+}
+inline Error memPoolTrimTo(MemPool pool, size_t bytesToKeep) { return hipMemPoolTrimTo(pool, bytesToKeep); }
 } // namespace gpu_runtime
 
 namespace gpu_blas {
@@ -201,6 +221,26 @@ inline Error streamSynchronize(Stream stream) { return cudaStreamSynchronize(str
 inline Error getDeviceProperties(DeviceProp *prop, int device) {
     return cudaGetDeviceProperties(prop, device);
 }
+using FunctionAttribute = cudaFuncAttribute;
+inline constexpr FunctionAttribute FuncAttributeMaxDynamicSharedMemorySize =
+    cudaFuncAttributeMaxDynamicSharedMemorySize;
+inline Error funcSetAttribute(const void *func, FunctionAttribute attr, int value) {
+    return cudaFuncSetAttribute(func, attr, value);
+}
+using Limit = cudaLimit;
+inline constexpr Limit LimitStackSize = cudaLimitStackSize;
+inline Error deviceSetLimit(Limit limit, size_t value) { return cudaDeviceSetLimit(limit, value); }
+inline Error deviceGetLimit(size_t *value, Limit limit) { return cudaDeviceGetLimit(value, limit); }
+using MemPool     = cudaMemPool_t;
+using MemPoolAttr = cudaMemPoolAttr;
+inline constexpr MemPoolAttr MemPoolAttrReleaseThreshold = cudaMemPoolAttrReleaseThreshold;
+inline Error deviceGetDefaultMemPool(MemPool *pool, int device) {
+    return cudaDeviceGetDefaultMemPool(pool, device);
+}
+inline Error memPoolSetAttribute(MemPool pool, MemPoolAttr attr, void *value) {
+    return cudaMemPoolSetAttribute(pool, attr, value);
+}
+inline Error memPoolTrimTo(MemPool pool, size_t bytesToKeep) { return cudaMemPoolTrimTo(pool, bytesToKeep); }
 } // namespace gpu_runtime
 
 namespace gpu_blas {

@@ -917,7 +917,7 @@ static void test_sizeof() {
     printf("typeid = %s\n", typeid(T).name());
     test_sizeof_host<T>();
     test_sizeof_device<T><<<1, 1>>>();
-    checkCUDA(cudaDeviceSynchronize());
+    checkCUDA(gpu_runtime::deviceSynchronize());
 }
 
 }; // namespace nunchaku::kernels

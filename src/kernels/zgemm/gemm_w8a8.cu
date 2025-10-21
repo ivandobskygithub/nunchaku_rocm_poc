@@ -26,14 +26,15 @@ void quantize_w8a8_act(Tensor input, Tensor output, Tensor oscales, bool fuse_gl
         auto func =
             invoke_kernel<kernel, const GEMM::half_t *, GEMM::packed_act_t *, GEMM::packed_ascale_t *, int, bool>;
 
-        checkCUDA(cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, 92160));
+        checkCUDA(gpu_runtime::funcSetAttribute(
+            func, gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize, 92160));
 
         func<<<grid, block, kernel::smemSize(M, K)>>>(input.data_ptr<GEMM::half_t>(),
                                                       output.data_ptr<GEMM::packed_act_t>(),
                                                       oscales.data_ptr<GEMM::packed_ascale_t>(),
                                                       K,
                                                       false);
-        checkCUDA(cudaGetLastError());
+        checkCUDA(gpu_runtime::getLastError());
     };
 
     if (fuse_glu) {
@@ -86,7 +87,7 @@ void gemm_w8a8(Tensor act,     // [M, K]
                                                           args,
                                                           swapBlockMN,
                                                           false);
-        checkCUDA(cudaGetLastError());
+        checkCUDA(gpu_runtime::getLastError());
     };
 
     auto launch_bias = [&]<typename NextEpilogue>(NextEpilogue::Arguments nextArgs) {
@@ -147,7 +148,7 @@ void gemm_w8a8_fuse_litela(
     epilogueArgs.out_q = out_q.data_ptr<GEMM::half_t>();
     epilogueArgs.out_vk = out_vk.data_ptr<float>();
 
-    checkCUDA(cudaMemsetAsync(out_vk.data_ptr(), 0, out_vk.buffer->getSize()));
+    checkCUDA(gpu_runtime::memsetAsync(out_vk.data_ptr(), 0, out_vk.buffer->getSize(), getCurrentGpuStream()));
 
     auto func = invoke_kernel<GEMM::gemm_w8a8_kernel<Epilogue>,
         const GEMM::packed_act_t *,
@@ -160,7 +161,8 @@ void gemm_w8a8_fuse_litela(
         bool,
         bool>;
 
-    checkCUDA(cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, Epilogue::SHMEM_SIZE));
+    checkCUDA(gpu_runtime::funcSetAttribute(
+        func, gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize, Epilogue::SHMEM_SIZE));
 
     dim3 grid(M / GEMM::BLOCK_M, N / GEMM::BLOCK_N);
 
@@ -179,14 +181,14 @@ void gemm_w8a8_fuse_litela(
         swapBlockMN,
         false
     );
-    checkCUDA(cudaGetLastError());
+    checkCUDA(gpu_runtime::getLastError());
 
     invoke_kernel<Epilogue::vk_mul_q_kernel><<<dim3(batch_m / 128, num_heads, batch_size), 128>>>(
         out_q.data_ptr<GEMM::half_t>(),
         out_vk.data_ptr<float>(),
         1e-6f
     );
-    checkCUDA(cudaGetLastError());
+    checkCUDA(gpu_runtime::getLastError());
 }
 #endif
 

@@ -283,7 +283,7 @@ Tensor gemv_awq(
                 gemv_kernel<half_t, N_PER_BLOCK, M, BLOCK_SIZE, GROUP_SIZE>
                     <<<num_blocks, num_threads, 0, getCurrentGpuStream()>>>(
                         in_feats, kernel, scaling_factors, zeros, out_feats, k, n);
-                checkCUDA(cudaGetLastError());
+                checkCUDA(gpu_runtime::getLastError());
             }
         });
 

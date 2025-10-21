@@ -208,34 +208,84 @@ __device__ __forceinline__ uint32_t quantize_float2(float2 value) = delete;
 
 template<>
 __device__ __forceinline__ uint32_t quantize_float2<4, false>(float2 value) {
+#if defined(__HIP_PLATFORM_AMD__)
+    auto clamp_round = [] __device__ (float v) {
+        float clamped = fminf(fmaxf(v, -8.0f), 7.0f);
+        return static_cast<int>(rintf(clamped));
+    };
+    int v1 = clamp_round(value.x);
+    int v2 = clamp_round(value.y);
+    auto to_nibble = [] __device__ (int v) {
+        return static_cast<uint32_t>(static_cast<int8_t>(v)) & 0xF;
+    };
+    return to_nibble(v1) | (to_nibble(v2) << 4);
+#else
     int v1, v2;
     uint32_t result;
     asm volatile("cvt.rni.s32.f32 %0, %1;" : "=r"(v1) : "f"(value.x));
     asm volatile("cvt.rni.s32.f32 %0, %1;" : "=r"(v2) : "f"(value.y));
     asm volatile("cvt.pack.sat.s4.s32.b32 %0, %1, %2, 0;" : "=r"(result) : "r"(v2), "r"(v1));
     return result;
+#endif
 }
 
 template<>
 __device__ __forceinline__ uint32_t quantize_float2<4, true>(float2 value) {
+#if defined(__HIP_PLATFORM_AMD__)
+    auto clamp_round = [] __device__ (float v) {
+        float clamped = fminf(fmaxf(v, 0.0f), 15.0f);
+        return static_cast<int>(rintf(clamped));
+    };
+    int v1 = clamp_round(value.x);
+    int v2 = clamp_round(value.y);
+    auto to_nibble = [] __device__ (int v) { return static_cast<uint32_t>(v & 0xF); };
+    return to_nibble(v1) | (to_nibble(v2) << 4);
+#else
     int v1, v2;
     uint32_t result;
     asm volatile("cvt.rni.s32.f32 %0, %1;" : "=r"(v1) : "f"(value.x));
     asm volatile("cvt.rni.s32.f32 %0, %1;" : "=r"(v2) : "f"(value.y));
     asm volatile("cvt.pack.sat.u4.s32.b32 %0, %1, %2, 0;" : "=r"(result) : "r"(v2), "r"(v1));
     return result;
+#endif
 }
 
 template<>
 __device__ __forceinline__ uint32_t quantize_float2<8, false>(float2 value) {
+#if defined(__HIP_PLATFORM_AMD__)
+    auto clamp_round = [] __device__ (float v) {
+        float clamped = fminf(fmaxf(v, -128.0f), 127.0f);
+        return static_cast<int>(rintf(clamped));
+    };
+    int v1 = clamp_round(value.x);
+    int v2 = clamp_round(value.y);
+    auto to_byte = [] __device__ (int v) {
+        return static_cast<uint32_t>(static_cast<int8_t>(v)) & 0xFF;
+    };
+    return to_byte(v1) | (to_byte(v2) << 8);
+#else
     int v1, v2;
     uint32_t result;
     asm volatile("cvt.rni.s32.f32 %0, %1;" : "=r"(v1) : "f"(value.x));
     asm volatile("cvt.rni.s32.f32 %0, %1;" : "=r"(v2) : "f"(value.y));
     asm volatile("cvt.pack.sat.s8.s32.b32 %0, %1, %2, 0;" : "=r"(result) : "r"(v2), "r"(v1));
     return result;
+#endif
 }
 
+#if defined(__HIP_PLATFORM_AMD__)
+__device__ __forceinline__ uint32_t quantize_float2_fp4(float2 value) {
+    return quantize_float2<4, false>(value);
+}
+
+__device__ __forceinline__ uint32_t quantize_float4_fp8(float4 value) {
+    float2 lo = make_float2(value.x, value.y);
+    float2 hi = make_float2(value.z, value.w);
+    uint32_t lo_pack = quantize_float2<8, false>(lo);
+    uint32_t hi_pack = quantize_float2<8, false>(hi);
+    return lo_pack | (hi_pack << 16);
+}
+#else
 __device__ __forceinline__ uint32_t quantize_float2_fp4(float2 value) {
     uint32_t result;
     asm volatile("{ .reg .b8 tmp; cvt.rn.satfinite.e2m1x2.f32 tmp, %1, %2; cvt.u32.u8 %0, tmp; }"
@@ -250,41 +300,66 @@ __device__ __forceinline__ uint32_t quantize_float4_fp8(float4 value) {
     asm volatile("cvt.rn.satfinite.e4m3x2.f32 %0, %1, %2;" : "=h"(hi) : "f"(value.w), "f"(value.z));
     return uint32_t(lo) | (uint32_t(hi) << 16);
 }
+#endif
 
 __device__ __forceinline__ static float cuda_tanhf(float x) {
+#if defined(__HIP_PLATFORM_AMD__)
+    return tanhf(x);
+#else
     float result;
     asm("tanh.approx.f32 %0, %1;" : "=f"(result) : "f"(x));
     return result;
+#endif
 }
 
 __device__ __forceinline__ static float cuda_frcp(float x) {
+#if defined(__HIP_PLATFORM_AMD__)
+    return 1.0f / x;
+#else
     float result;
     asm("rcp.approx.ftz.f32 %0, %1;" : "=f"(result) : "f"(x));
     return result;
+#endif
 }
 
 __device__ __forceinline__ static float cuda_frsqrt(float x) {
+#if defined(__HIP_PLATFORM_AMD__)
+    return rsqrtf(x);
+#else
     float result;
     asm("rsqrt.approx.ftz.f32 %0, %1;" : "=f"(result) : "f"(x));
     return result;
+#endif
 }
 
 __device__ __forceinline__ static float cuda_sin(float x) {
+#if defined(__HIP_PLATFORM_AMD__)
+    return sinf(x);
+#else
     float result;
     asm("sin.approx.ftz.f32 %0, %1;" : "=f"(result) : "f"(x));
     return result;
+#endif
 }
 
 __device__ __forceinline__ static float cuda_cos(float x) {
+#if defined(__HIP_PLATFORM_AMD__)
+    return cosf(x);
+#else
     float result;
     asm("cos.approx.ftz.f32 %0, %1;" : "=f"(result) : "f"(x));
     return result;
+#endif
 }
 
 __device__ __forceinline__ static float cuda_exp2(float x) {
+#if defined(__HIP_PLATFORM_AMD__)
+    return exp2f(x);
+#else
     float result;
     asm("ex2.approx.ftz.f32 %0, %1;" : "=f"(result) : "f"(x));
     return result;
+#endif
 }
 
 // https://forums.developer.nvidia.com/t/hardware-accelerated-computation-of-the-sigmoid-logistic-function/266206
@@ -293,12 +368,18 @@ __forceinline__ __device__ static float cuda_sigmoidf(float a) {
     return fmaf(0.5, __tanhf(0.5f * a), 0.5f);
 #else  // USE_TANH
     const float L2E = 1.442695041f; // log2(exp(1))
-    float t, d, e, r;
-    t = -L2E * a;
+    float t = -L2E * a;
+#if defined(__HIP_PLATFORM_AMD__)
+    float e = exp2f(t);
+    float d = e + 1.0f;
+    return 1.0f / d;
+#else
+    float d, e, r;
     asm("ex2.approx.ftz.f32 %0,%1;\n\t" : "=f"(e) : "f"(t));
     d = e + 1.0f;
     asm("rcp.approx.ftz.f32 %0,%1;\n\t" : "=f"(r) : "f"(d));
     return r;
+#endif
 #endif // USE_TANH
 }
 

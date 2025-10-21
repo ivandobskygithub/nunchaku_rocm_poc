@@ -101,7 +101,8 @@ void GEMM_W4A4_Launch<GEMMConfig_W4A4_FP16, false>::gemm_w4a4(
                                           bool>;
 
                 if (shmem >= 24 * 1024) {
-                    checkCUDA(cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
+                    checkCUDA(gpu_runtime::funcSetAttribute(
+                        func, gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize, shmem));
                 }
 
                 assert(alpha == 1.0f);
@@ -117,7 +118,7 @@ void GEMM_W4A4_Launch<GEMMConfig_W4A4_FP16, false>::gemm_w4a4(
                     args,
                     swapBlockMN,
                     false);
-                checkCUDA(cudaGetLastError());
+                checkCUDA(gpu_runtime::getLastError());
             });
             return;
         }
@@ -140,7 +141,8 @@ void GEMM_W4A4_Launch<GEMMConfig_W4A4_FP16, false>::gemm_w4a4(
                                           bool>;
 
                 if (shmem >= 24 * 1024) {
-                    checkCUDA(cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
+                    checkCUDA(gpu_runtime::funcSetAttribute(
+                        func, gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize, shmem));
                 }
 
                 assert(ascales.dtype() == Tensor::FP8_E4M3);
@@ -158,7 +160,7 @@ void GEMM_W4A4_Launch<GEMMConfig_W4A4_FP16, false>::gemm_w4a4(
                     args,
                     swapBlockMN,
                     false);
-                checkCUDA(cudaGetLastError());
+                checkCUDA(gpu_runtime::getLastError());
             });
 
             return;
@@ -444,7 +446,7 @@ void GEMM_W4A4_Launch<Config, USE_FP4>::linearattn_vk_mul_q(Tensor q, Tensor vk)
     invoke_kernel<typename Epilogue::vk_mul_q_kernel>
         <<<dim3(ceilDiv(num_tokens, BLOCK_SIZE), num_heads, batch_size), BLOCK_SIZE, 0, getCurrentGpuStream()>>>(
             q.data_ptr<half_t>(), vk.data_ptr<float>(), 1e-6f, num_tokens);
-    checkCUDA(cudaGetLastError());
+    checkCUDA(gpu_runtime::getLastError());
 }
 
 template<typename Config, bool USE_FP4>
@@ -495,7 +497,8 @@ void GEMM_W4A4_Launch<Config, USE_FP4>::quantize_w4a4_act_fuse_lora(Tensor input
 
         auto func = invoke_kernel<kernel, typename kernel::Arguments>;
 
-        checkCUDA(cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, kernel::SHMEM_SIZE));
+        checkCUDA(gpu_runtime::funcSetAttribute(
+            func, gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize, kernel::SHMEM_SIZE));
 
         // log(std::format("quantize_w4a4_act_fuse_lora M={} N={} input={} output={} (size={} numel={})", M, N,
         // input.data_ptr(), output.data_ptr(), output.buffer->getSize(), output.numel()));
@@ -515,7 +518,7 @@ void GEMM_W4A4_Launch<Config, USE_FP4>::quantize_w4a4_act_fuse_lora(Tensor input
                 .actualN       = actualN,
                 .alwaysfalse   = false,
             });
-        checkCUDA(cudaGetLastError());
+        checkCUDA(gpu_runtime::getLastError());
     });
     // });
 }
@@ -541,7 +544,7 @@ void GEMM_W4A4_Launch<Config, USE_FP4>::quantize_w4a4_act(Tensor input, Tensor o
     dim3 grid(M / GEMM::WARP_M, K / GEMM::WARP_K);
     invoke_kernel<typename GEMM::quantize_w4a4_act_kernel><<<grid, GEMM::WARP_SIZE, 0, getCurrentGpuStream()>>>(
         input.data_ptr<half_t>(), output.data_ptr<packed_act_t>(), oscales.data_ptr<packed_ascale_t>(), K);
-    checkCUDA(cudaGetLastError());
+    checkCUDA(gpu_runtime::getLastError());
 }
 
 template<typename Config, bool USE_FP4>
@@ -566,7 +569,7 @@ void GEMM_W4A4_Launch<Config, USE_FP4>::quantize_w4a4_wgt(Tensor input, Tensor o
     dim3 grid(N / GEMM::WARP_N, K / GEMM::WARP_K);
     invoke_kernel<typename GEMM::quantize_w4a4_wgt_kernel><<<grid, GEMM::WARP_SIZE, 0, getCurrentGpuStream()>>>(
         input.data_ptr<half_t>(), output.data_ptr<packed_wgt_t>(), oscales.data_ptr<packed_wscale_t>(), K);
-    checkCUDA(cudaGetLastError());
+    checkCUDA(gpu_runtime::getLastError());
 }
 
 }; // namespace nunchaku::kernels
