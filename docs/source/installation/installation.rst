@@ -170,8 +170,16 @@ This command installs Nunchaku in editable mode along with all development depen
 
 .. code-block:: shell
 
-    NUNCHAKU_INSTALL_MODE=ALL NUNCHAKU_BUILD_WHEELS=1 python -m build --wheel --no-isolation
+    NUNCHAKU_INSTALL_MODE=ALL NUNCHAKU_BUILD_WHEELS=1 pip wheel . --no-deps --no-build-isolation -w dist
 
 .. important::
 
    Set ``NUNCHAKU_INSTALL_MODE=ALL`` to ensure the wheel works on all supported GPU architectures. Otherwise, it may only run on the GPU type used for building.
+
+ROCm builds
+^^^^^^^^^^^
+
+- Set the ``ROCM_HOME`` environment variable to the root of your HIP/ROCm SDK installation. On Windows you may also use ``HIPSDK_PATH`` (or ``HIP_SDK_PATH``); the build scripts treat these variables as aliases.
+- Ensure that ``%ROCM_HOME%\bin`` (Windows) or ``$ROCM_HOME/bin`` (Linux) is in ``PATH`` so that ``hipcc`` can be located.
+- Wheels are produced via ``pip wheel . --no-deps --no-build-isolation -w dist``; this is already handled for you inside ``scripts/build_windows_wheel.cmd`` and ``scripts/build_linux_wheel.sh``.
+- Windows wheel builds automatically bundle the required ROCm runtime DLLs (``amdhip64.dll``, ``hiprtc.dll``, ``hiprtc-builtins.dll``) into the package. Make sure these files exist in ``%ROCM_HOME%\bin``.

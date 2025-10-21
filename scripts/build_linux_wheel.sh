@@ -36,9 +36,9 @@ docker run --rm \
     rm -rf build && \
     gcc --version && g++ --version && \
     ${PYTHON_ROOT_PATH}/bin/pip install --no-cache-dir torch==${TORCH_VERSION} torchvision==${TORCHVISION_VERSION} torchaudio==${TORCHAUDIO_VERSION} --index-url https://download.pytorch.org/whl/cu${CUDA_VERSION//.} && \
-    ${PYTHON_ROOT_PATH}/bin/pip install build ninja wheel setuptools && \
+    ${PYTHON_ROOT_PATH}/bin/pip install ninja wheel setuptools && \
     export NUNCHAKU_INSTALL_MODE=ALL && \
     export NUNCHAKU_BUILD_WHEELS=1 && \
     export MAX_JOBS=${MAX_JOBS} && \
-    ${PYTHON_ROOT_PATH}/bin/python -m build --wheel --no-isolation
+    ${PYTHON_ROOT_PATH}/bin/pip wheel . --no-deps --no-build-isolation -w dist
     "
