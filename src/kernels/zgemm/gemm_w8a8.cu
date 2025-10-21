@@ -87,7 +87,7 @@ void gemm_w8a8(Tensor act,     // [M, K]
                                                           args,
                                                           swapBlockMN,
                                                           false);
-        checkCUDA(cudaGetLastError());
+        checkCUDA(gpu_runtime::getLastError());
     };
 
     auto launch_bias = [&]<typename NextEpilogue>(NextEpilogue::Arguments nextArgs) {

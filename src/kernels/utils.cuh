@@ -167,12 +167,19 @@ static inline __device__ int8_t float_to_int8_rn(float x) {
 #endif
 }
 
+#if defined(__HIP_PLATFORM_AMD__)
+template<typename T>
+inline __device__ T ldg(const T *val) {
+    return *val;
+}
+#else
 template<typename T>
 inline __device__ T ldg(const T *val) {
     return __ldg(val);
 }
+#endif
 
-#if ENABLE_BF16
+#if ENABLE_BF16 && !defined(__HIP_PLATFORM_AMD__)
 #define bf1622float2 __bfloat1622float2
 #define float22bf162 __float22bfloat162_rn
 #define bf162bf162 __bfloat162bfloat162
@@ -206,7 +213,7 @@ inline __device__ int16_t bf1622int16(__nv_bfloat162 val) {
 }
 #endif
 
-#if ENABLE_BF16
+#if ENABLE_BF16 && !defined(__HIP_PLATFORM_AMD__)
 template<>
 inline __device__ __nv_bfloat162 ldg(const __nv_bfloat162 *val) {
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 800
@@ -224,7 +231,7 @@ inline __device__ __nv_bfloat16 ldg(const __nv_bfloat16 *val) {
     return __ldg(val);
 #endif
 }
-#endif // ENABLE_BF16
+#endif // ENABLE_BF16 && !defined(__HIP_PLATFORM_AMD__)
 
 template<typename T_OUT, typename T_IN>
 __device__ inline T_OUT cuda_cast(T_IN val) {

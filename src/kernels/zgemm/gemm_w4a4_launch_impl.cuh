@@ -446,7 +446,7 @@ void GEMM_W4A4_Launch<Config, USE_FP4>::linearattn_vk_mul_q(Tensor q, Tensor vk)
     invoke_kernel<typename Epilogue::vk_mul_q_kernel>
         <<<dim3(ceilDiv(num_tokens, BLOCK_SIZE), num_heads, batch_size), BLOCK_SIZE, 0, getCurrentGpuStream()>>>(
             q.data_ptr<half_t>(), vk.data_ptr<float>(), 1e-6f, num_tokens);
-    checkCUDA(cudaGetLastError());
+    checkCUDA(gpu_runtime::getLastError());
 }
 
 template<typename Config, bool USE_FP4>
