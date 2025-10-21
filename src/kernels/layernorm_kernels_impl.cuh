@@ -1,4 +1,4 @@
-#include <cuda_bf16.h>
+#include "device_compat.h"
 
 #define ENABLE_BF16 1
 

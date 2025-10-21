@@ -1,5 +1,4 @@
-#include <cuda_fp16.h>
-#include <cuda_bf16.h>
+#include "../device_compat.h"
 #include "semaphore.h"
 #include "gemm_awq.h"
 // #include "../../../nunchaku/csrc/quantization/dequantize.cuh"
@@ -9,7 +8,9 @@
 // #include "../../../nunchaku/csrc/utils.cuh"
 #include "../utils.cuh"
 
+#if !defined(__HIP_PLATFORM_AMD__)
 #include <cuda_pipeline_primitives.h>
+#endif
 
 #define kInterleave 4
 #define OP_M 16

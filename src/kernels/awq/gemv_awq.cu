@@ -29,9 +29,7 @@
 #include "../dispatch_utils.h"
 
 #include "../utils.cuh"
-
-#include <cuda_fp16.h>
-#include <cuda_bf16.h>
+#include "../device_compat.h"
 #include <stdio.h>
 #include "dequantize.cuh"
 
