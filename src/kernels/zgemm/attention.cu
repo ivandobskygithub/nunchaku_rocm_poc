@@ -71,7 +71,8 @@ void attention_fp16(Tensor q, // packed [Batch, Head, TokensQ, HEAD_DIM]
             shmem = std::max(shmem, Attention::template attention_fp16_kernel<Epilogue>::SHMEM_SIZE);
 
             if (shmem >= 24 * 1024) {
-                checkCUDA(cudaFuncSetAttribute(func, cudaFuncAttributeMaxDynamicSharedMemorySize, shmem));
+                checkCUDA(gpu_runtime::funcSetAttribute(
+                    func, gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize, shmem));
             }
 
             func<<<grid, GEMM::WARP_SIZE * GEMM::NUM_WARPS, shmem, getCurrentGpuStream()>>>(q.data_ptr<packed_q_t>(),
@@ -82,7 +83,7 @@ void attention_fp16(Tensor q, // packed [Batch, Head, TokensQ, HEAD_DIM]
                                                                                              numTokensKV,
                                                                                              args,
                                                                                              false);
-            checkCUDA(cudaGetLastError());
+            checkCUDA(gpu_runtime::getLastError());
         };
 
         launch.template operator()<typename GEMM::EpilogueDefault>(typename GEMM::EpilogueDefault::Arguments{

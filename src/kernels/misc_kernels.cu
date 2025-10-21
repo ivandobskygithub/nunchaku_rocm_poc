@@ -278,7 +278,7 @@ void cast(Tensor input, Tensor output) {
             cast_kernel<input_t, output_t, unroll><<<blocksPerGrid, threadsPerBlock, 0, stream>>>(
                 input.data_ptr<input_t>(), output.data_ptr<output_t>(), input.numel());
 
-            checkCUDA(cudaGetLastError());
+            checkCUDA(gpu_runtime::getLastError());
         });
     });
 }
@@ -309,7 +309,7 @@ Tensor topk(Tensor x, int k) {
             dispatch(x.scalar_type(), [&]<typename scalar_t>() {
                 topk_kernel<scalar_t, K><<<ceilDiv(batch, 32), 32, 0, stream>>>(
                     x.data_ptr<scalar_t>(), out.data_ptr<int>(), N, x.stride(-2), batch);
-                checkCUDA(cudaGetLastError());
+                checkCUDA(gpu_runtime::getLastError());
             });
         }
     });

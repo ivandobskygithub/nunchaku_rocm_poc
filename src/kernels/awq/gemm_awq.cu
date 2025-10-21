@@ -1,3 +1,4 @@
+#include "common.h"
 #include "../device_compat.h"
 #include "semaphore.h"
 #include "gemm_awq.h"
@@ -47,7 +48,10 @@
     dim3 num_blocks((num_out_feats + CTA_M - 1) / CTA_M * j_factors1 * SPLITK);                                        \
     dim3 threads_per_block(WARP_SIZE, NUM_WARPS);                                                                      \
     auto kernel_func = gemm_w4a16_T1<f16_t, CTA_M, CTA_N, CTA_K, WARP_M, WARP_N, WARP_K, STAGES, G, SPLITK>;           \
-    cudaFuncSetAttribute(kernel_func, cudaFuncAttributeMaxDynamicSharedMemorySize, kSmemByteSize);                     \
+    checkCUDA(gpu_runtime::funcSetAttribute(                                                                         \
+        reinterpret_cast<const void *>(kernel_func),                                                                 \
+        gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize,                                                        \
+        kSmemByteSize));                                                                                             \
     kernel_func<<<num_blocks, threads_per_block, kSmemByteSize>>>(                                                     \
         in_feats, kernel, scales, zeros, out_feats, semaphores, num_in_feats, num_out_channels, num_in_channels);
 
@@ -1278,7 +1282,10 @@ Tensor awq_gemm_forward_cuda(Tensor _in_feats, Tensor _kernel, Tensor _scales, T
             dim3 num_blocks((num_out_feats + CTA_M - 1) / CTA_M * j_factors1);
             dim3 threads_per_block(WARP_SIZE, NUM_WARPS);
             auto kernel_func = gemm_w4a16_T2<f16_t, CTA_M, CTA_N, CTA_K, WARP_M, WARP_N, WARP_K, STAGES, G>;
-            cudaFuncSetAttribute(kernel_func, cudaFuncAttributeMaxDynamicSharedMemorySize, kSmemByteSize);
+            checkCUDA(gpu_runtime::funcSetAttribute(
+                reinterpret_cast<const void *>(kernel_func),
+                gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize,
+                kSmemByteSize));
             kernel_func<<<num_blocks, threads_per_block, kSmemByteSize>>>(
                 in_feats, kernel, scales, zeros, out_feats, num_in_feats, num_out_channels, num_in_channels);
         }
@@ -1358,7 +1365,10 @@ Tensor awq_gemm_forward_cuda(Tensor _in_feats, Tensor _kernel, Tensor _scales, T
             dim3 num_blocks((num_out_feats + CTA_M - 1) / CTA_M * j_factors1);
             dim3 threads_per_block(WARP_SIZE, NUM_WARPS);
             auto kernel_func = gemm_w4a16_T2<f16_t, CTA_M, CTA_N, CTA_K, WARP_M, WARP_N, WARP_K, STAGES, G>;
-            cudaFuncSetAttribute(kernel_func, cudaFuncAttributeMaxDynamicSharedMemorySize, kSmemByteSize);
+            checkCUDA(gpu_runtime::funcSetAttribute(
+                reinterpret_cast<const void *>(kernel_func),
+                gpu_runtime::FuncAttributeMaxDynamicSharedMemorySize,
+                kSmemByteSize));
             kernel_func<<<num_blocks, threads_per_block, kSmemByteSize>>>(
                 in_feats, kernel, scales, zeros, out_feats, num_in_feats, num_out_channels, num_in_channels);
         }

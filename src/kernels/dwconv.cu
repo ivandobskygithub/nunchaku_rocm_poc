@@ -1,6 +1,14 @@
 #include "common.h"
 #include "Tensor.h"
 
+#if defined(NUNCHAKU_USE_HIP)
+
+Tensor dwconv_f16(Tensor /*input*/, Tensor /*weight*/, Tensor /*out*/, Tensor /*bias*/) {
+    throw std::runtime_error("Depthwise convolution is not yet supported on HIP");
+}
+
+#else
+
 #include "dispatch_cutlass.h"
 
 #include <cuda_runtime.h>
@@ -74,7 +82,7 @@ static cutlass::Status depthwise_conv2d_kernel_run(cutlass::conv::Conv2dProblemS
                                             UnderlyingKernel::ElementA *A, UnderlyingKernel::ElementB *B,
                                             UnderlyingKernel::ElementC *C, UnderlyingKernel::ElementC *D,
                                             ElementCompute alpha, ElementCompute beta, std::string split_k_mode,
-                                            cudaStream_t stream, int device_id = 0)
+                                            gpu_runtime::Stream stream, int device_id = 0)
 {
     // create the tensor references
     cutlass::Tensor4DCoord tensor_coord_A = cutlass::conv::implicit_gemm_tensor_a_extent(
@@ -197,6 +205,8 @@ Tensor depthwise_conv2d_kernel(Tensor A, Tensor B) {
 
     return D;
 }
+
+#endif // defined(NUNCHAKU_USE_HIP)
 
 #endif
 
