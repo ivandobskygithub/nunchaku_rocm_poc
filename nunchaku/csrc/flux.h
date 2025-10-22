@@ -199,13 +199,23 @@ public:
 
     void setAttentionImpl(std::string name) {
         if (name.empty() || name == "default") {
+#if NUNCHAKU_WITH_BLOCK_SPARSE
             name = "flashattn2";
+#else
+            name = "nunchaku-fp16";
+#endif
         }
 
         spdlog::info("Set attention implementation to {}", name);
 
         if (name == "flashattn2") {
+#if NUNCHAKU_WITH_BLOCK_SPARSE
             net->setAttentionImpl(AttentionImpl::FlashAttention2);
+#else
+            throw std::invalid_argument(
+                "FlashAttention-2 backend is not available in this build; use 'nunchaku-fp16' instead."
+            );
+#endif
         } else if (name == "nunchaku-fp16") {
             net->setAttentionImpl(AttentionImpl::NunchakuFP16);
         } else {

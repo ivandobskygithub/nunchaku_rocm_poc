@@ -113,7 +113,110 @@ After updating `PATH`, restart the terminal to pick up the changes.
 - **PyTorch reports no HIP devices**: Check that the AMD Windows GPU driver is active (Device Manager) and that Secure Boot is either enabled with Microsoft keys or disabled, per AMD's documentation.
 - **Kernel launch failures**: Set `NUNCHAKU_DEBUG_GPU=1` before running tests to surface verbose logging from the unified GPU runtime helpers.
 
-## 9. Future automation ideas
+## 9. Linux ROCm 7 quickstart
+
+While the primary focus of this guide is Windows, the HIP toolchain in this repository also supports Linux hosts running ROCm 7. The steps below were validated on Ubuntu 22.04 with an Instinct MI300 workstation and the ROCm 7.0.2 packages.
+
+### 9.1 Install ROCm runtime and developer packages
+
+1. Add AMD's ROCm APT repository and install the developer stack:
+
+   ```bash
+   sudo wget -qO - https://repo.radeon.com/rocm/rocm.gpg.key | sudo gpg --dearmor -o /etc/apt/keyrings/rocm.gpg
+   echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/rocm.gpg] https://repo.radeon.com/rocm/apt/7.0 jammy main" | sudo tee /etc/apt/sources.list.d/rocm.list
+   sudo apt update
+   sudo apt install rocm-dev rocblas rocblas-dev rocblaslt hipblaslt hipblaslt-dev hipfft-dev python3-venv build-essential ninja-build cmake pkg-config
+   ```
+
+2. Add your user to the `video` group and reboot to ensure the GPU devices are accessible:
+
+   ```bash
+   sudo usermod -aG video $USER
+   sudo reboot
+   ```
+
+### 9.2 Configure environment variables
+
+Add the following lines to `~/.bashrc` (adjust `/opt/rocm` if ROCm is installed elsewhere):
+
+```bash
+export ROCM_HOME=/opt/rocm
+export HIP_PATH=/opt/rocm
+export HIPSDK_PATH=/opt/rocm
+export HIP_SDK_PATH=/opt/rocm
+export PATH="$ROCM_HOME/bin:$PATH"
+export LD_LIBRARY_PATH="$ROCM_HOME/lib:$ROCM_HOME/lib64:$LD_LIBRARY_PATH"
+# Optional: point the build system at out-of-tree libraries
+export ROCM_EXTRA_LIB_DIRS="$HOME/rocm/lib"
+```
+
+Reload your shell (`source ~/.bashrc`) after editing the file.
+
+### 9.3 Validate ROCm installation
+
+Run the following commands to confirm that HIP can see the devices and toolchain:
+
+```bash
+rocminfo | grep -m1 "gfx"
+hipconfig --version
+python - <<'PY'
+import torch
+assert torch.version.hip, "PyTorch was not compiled with HIP support"
+print("HIP devices:", [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())])
+PY
+```
+
+### 9.4 Build and test the extension
+
+1. Clone the repository and initialize submodules:
+
+   ```bash
+   git clone https://github.com/<org>/nunchaku.git
+   cd nunchaku
+   git submodule update --init --recursive
+   ```
+
+2. Create a virtual environment and install dependencies:
+
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   pip install --upgrade pip wheel build
+   pip install -r requirements.txt
+   ```
+
+3. Build the HIP extension. `setup.py` will automatically detect the available `gfx` targets (via `rocminfo` and PyTorch) and enable the correct `--offload-arch` flags:
+
+   ```bash
+   python -m build
+   ```
+
+4. Install the wheel and run a smoke test:
+
+   ```bash
+   pip install dist/nunchaku-*-cp$(python -c 'import sys;print(f"{sys.version_info.major}{sys.version_info.minor}")')-linux_x86_64.whl
+   python - <<'PY'
+import nunchaku
+import torch
+print("has_block_sparse_attention:", nunchaku.has_block_sparse_attention)
+print("nunchaku._C available:", hasattr(nunchaku, "ops"))
+PY
+   ```
+
+5. Optional: run the HIP smoke tests and a sample workflow.
+
+   ```bash
+   pytest tests/hip --maxfail=1 --disable-warnings
+   python examples/v1/qwen-image-edit-2509.py --quant-int4 --device hip:0
+   ```
+
+### 9.5 Troubleshooting
+
+- If `rocminfo` fails with permission errors, verify your user is in the `video` group and that Secure Boot is configured according to AMD's ROCm documentation.
+- To force a specific architecture list, set `NUNCHAKU_HIP_ARCHES="gfx942,gfx940"` before invoking `python -m build`.
+- Missing `rocblaslt`/`hipblaslt` libraries can be resolved by installing the `rocblaslt` and `hipblaslt` packages or by pointing `ROCM_EXTRA_LIB_DIRS` at custom build locations.
+
+## 10. Future automation ideas
 
 - Integrate the steps above into a PowerShell script or `Invoke-Build` recipe that configures the environment, runs `python -m build`, and packages the resulting wheel automatically.
 - Add GitHub Actions workflows that target a self-hosted Windows ROCm runner to continuously build and smoke-test the HIP wheel.

@@ -1,6 +1,6 @@
-# Continuous Integration for Windows ROCm builds
+# Continuous Integration for ROCm builds
 
-This document explains how to operate the Windows ROCm GitHub Actions workflow added in `.github/workflows/windows-rocm.yml`. It covers the expected runner configuration, secrets, and artifact handling.
+This document explains how to operate the ROCm GitHub Actions workflows added in `.github/workflows/windows-rocm.yml` and the companion Linux job. It covers the expected runner configuration, secrets, and artifact handling for both platforms.
 
 ## Self-hosted runner requirements
 
@@ -27,9 +27,20 @@ Ensure the runner service account has permission to install device drivers and a
 - Pin Python and toolchain versions using [winget](https://learn.microsoft.com/windows/package-manager/) or Chocolatey so the workflow receives deterministic builds.
 - Enable disk cleanup (e.g., Storage Sense) to prevent caches from filling the SSD.
 
+### Linux ROCm runner
+
+| Component | Requirement |
+| --- | --- |
+| Hardware | AMD Instinct MI300 or MI210 GPU, ≥ 64 GB RAM, ≥ 200 GB SSD |
+| OS | Ubuntu 22.04 LTS with ROCm 7.0.2 repositories enabled |
+| Toolchain | Python 3.10+, `rocm-dev`, `rocblas{,lt}`, `hipblaslt`, `hipfft`, CMake 3.26+, Ninja, `python3-venv` |
+| Networking | Outbound HTTPS (github.com, pypi.org, repo.radeon.com) |
+
+Register the runner with labels `self-hosted`, `Linux`, and `ROCm`. The runner service account must belong to the `video` group and source `/opt/rocm` in its shell profile (export `ROCM_HOME`, `HIP_PATH`, `ROCM_EXTRA_LIB_DIRS`, and update `LD_LIBRARY_PATH`).
+
 ## Workflow overview
 
-The `windows-rocm.yml` workflow executes the following steps for pushes, pull requests, and version tags (prefixed with `v`):
+The `windows-rocm.yml` workflow executes the following steps for pushes, pull requests, and version tags (prefixed with `v`). A second job, `linux-rocm`, mirrors the build/test stages using the Ubuntu runner described above.
 
 1. **Prepare ROCm paths** – verifies that ROCm is installed and prepends the HIP and ROCm binary folders to the `PATH` so Python can import HIP runtime DLLs.
 2. **Set up Python** – installs Python 3.10 on the runner.
@@ -40,6 +51,7 @@ The `windows-rocm.yml` workflow executes the following steps for pushes, pull re
 7. **Build ROCm wheel** – builds a binary wheel with `python -m build`, placing the artifact in `dist\rocm`.
 8. **Upload artifacts** – publishes wheels and profiling JSON as workflow artifacts.
 9. **Publish release artifacts** – when a `v*` tag is pushed, attaches the wheel(s) and profile report to the GitHub Release via `softprops/action-gh-release`.
+10. **Linux verification** – builds the HIP wheel on Ubuntu, asserts `nunchaku.has_block_sparse_attention` matches the expected backend, and runs the HIP pytest subset.
 
 ## Secrets and permissions
 
@@ -59,6 +71,7 @@ To compare ROCm performance with NVIDIA or CPU runs, generate baseline JSON metr
 | `torch.cuda.is_available()` returns `False` | Reboot the runner, verify GPU is detected in Device Manager, and ensure AMD Software: PRO Edition installed ROCm components. |
 | Example profiling step exits early | Check `logs/rocm_profile.json` for the `status` and `error` fields. Missing assets (e.g., model weights) may require caching or stub downloads. |
 | Wheels not attached to release | Confirm the workflow ran on a tag starting with `v` and that the `GITHUB_TOKEN` has `contents: write` permission (default for public repos). |
+| Linux job cannot locate rocBLASLt | Install the `rocblaslt` and `hipblaslt` packages or set `ROCM_EXTRA_LIB_DIRS` to include the custom library build directory. |
 
 ## Updating dependencies
 

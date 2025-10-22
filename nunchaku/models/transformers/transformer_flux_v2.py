@@ -18,6 +18,7 @@ from diffusers.models.transformers.transformer_flux import (
 from huggingface_hub import utils
 from torch.nn import GELU
 
+from ..._C import has_block_sparse_attention as _HAS_BLOCK_SPARSE
 from ...ops.fused import fused_gelu_mlp
 from ...utils import get_precision, pad_tensor
 from ..attention import NunchakuBaseAttention, NunchakuFeedForward
@@ -27,6 +28,9 @@ from ..linear import SVDQW4A4Linear
 from ..normalization import NunchakuAdaLayerNormZero, NunchakuAdaLayerNormZeroSingle
 from ..utils import fuse_linears
 from .utils import NunchakuModelLoaderMixin
+
+
+DEFAULT_ATTENTION_PROCESSOR = "flashattn2" if _HAS_BLOCK_SPARSE else "nunchaku-fp16"
 
 
 class NunchakuFluxAttention(NunchakuBaseAttention):
@@ -43,7 +47,7 @@ class NunchakuFluxAttention(NunchakuBaseAttention):
         Additional arguments for quantization.
     """
 
-    def __init__(self, other: FluxAttention, processor: str = "flashattn2", **kwargs):
+    def __init__(self, other: FluxAttention, processor: str = DEFAULT_ATTENTION_PROCESSOR, **kwargs):
         super(NunchakuFluxAttention, self).__init__(processor)
         self.head_dim = other.head_dim
         self.inner_dim = other.inner_dim

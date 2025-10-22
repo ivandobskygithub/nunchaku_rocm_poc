@@ -9,6 +9,11 @@
 #include <pybind11/pybind11.h>
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
+#if NUNCHAKU_WITH_BLOCK_SPARSE
+    m.attr("has_block_sparse_attention") = true;
+#else
+    m.attr("has_block_sparse_attention") = false;
+#endif
     py::class_<QuantizedFluxModel>(m, "QuantizedFluxModel")
         .def(py::init<>())
         .def("init",
