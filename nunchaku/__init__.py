@@ -1,3 +1,4 @@
+from ._C import has_block_sparse_attention
 from .models import (
     NunchakuFluxTransformer2dModel,
     NunchakuFluxTransformer2DModelV2,
@@ -12,4 +13,5 @@ __all__ = [
     "NunchakuT5EncoderModel",
     "NunchakuFluxTransformer2DModelV2",
     "NunchakuQwenImageTransformer2DModel",
+    "has_block_sparse_attention",
 ]

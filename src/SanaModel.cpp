@@ -1,4 +1,5 @@
 #include <iostream>
+#include <stdexcept>
 
 #include "SanaModel.h"
 #include "kernels/zgemm/zgemm.h"
@@ -163,6 +164,11 @@ Tensor MultiHeadCrossAttention::forward(Tensor x, Tensor cond, Tensor cu_seqlens
     Tensor k = kv.slice(1, 0, num_heads);
     Tensor v = kv.slice(1, num_heads, num_heads * 2);
 
+#if !NUNCHAKU_WITH_BLOCK_SPARSE
+    throw std::runtime_error(
+        "Sana block-sparse attention requires FlashAttention2; rebuild with CUDA support or disable the feature."
+    );
+#else
     Tensor attn_output = mha_varlen_fwd(q,
                                         k,
                                         v,
@@ -179,6 +185,7 @@ Tensor MultiHeadCrossAttention::forward(Tensor x, Tensor cond, Tensor cu_seqlens
                                         false)
                              .front()
                              .view({batch_size, num_tokens_img, num_heads * head_dim});
+#endif
 
     // Tensor attn_output = mha_fwd(q, k, v,
     //     0.0f,

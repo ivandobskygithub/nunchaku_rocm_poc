@@ -94,6 +94,92 @@ def get_sm_targets() -> list[str]:
     return ret
 
 
+def _unique_preserving_order(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        ordered.append(value)
+    return ordered
+
+
+def _parse_hip_arch_list(raw: str) -> list[str]:
+    tokens = re.split(r"[\s,;]+", raw)
+    return [token for token in tokens if token.startswith("gfx")]
+
+
+def detect_hip_arches() -> list[str]:
+    override = os.environ.get("NUNCHAKU_HIP_ARCHES")
+    if override:
+        arches = _parse_hip_arch_list(override)
+        if arches:
+            return _unique_preserving_order(arches)
+
+    detected: list[str] = []
+
+    try:
+        if torch.cuda.is_available():
+            for idx in range(torch.cuda.device_count()):
+                props = torch.cuda.get_device_properties(idx)
+                arch = getattr(props, "gcnArchName", None)
+                if arch and arch.startswith("gfx"):
+                    detected.append(arch)
+    except Exception:
+        pass
+
+    def _extract_gfx_from_output(output: str) -> list[str]:
+        matches = re.findall(r"gfx[0-9a-zA-Z]+", output)
+        return matches
+
+    for command in (["rocminfo"], ["rocminfo", "--hip"]):
+        try:
+            output = subprocess.check_output(command, stderr=subprocess.STDOUT, text=True)
+        except (FileNotFoundError, subprocess.CalledProcessError):
+            continue
+        detected.extend(_extract_gfx_from_output(output))
+
+    try:
+        hipconfig_output = subprocess.check_output(["hipconfig", "--amdgpu-target"], stderr=subprocess.STDOUT, text=True)
+        detected.extend(_parse_hip_arch_list(hipconfig_output))
+    except (FileNotFoundError, subprocess.CalledProcessError):
+        pass
+
+    detected = _unique_preserving_order(detected)
+    if detected:
+        return detected
+
+    fallback_arch = os.environ.get("NUNCHAKU_DEFAULT_HIP_ARCH", "gfx1201")
+    print(
+        f"[nunchaku] Unable to detect HIP offload targets; defaulting to {fallback_arch}",
+        file=sys.stderr,
+    )
+    return [fallback_arch]
+
+
+def detect_block_sparse_support(sm_targets: list[str], hip_arches: list[str], is_rocm: bool) -> bool:
+    override = os.environ.get("NUNCHAKU_BLOCK_SPARSE")
+    if override is not None:
+        return override.strip().lower() in {"1", "true", "yes", "on"}
+
+    if is_rocm:
+        return False
+
+    for target in sm_targets:
+        digits = "".join(ch for ch in target if ch.isdigit())
+        if not digits:
+            continue
+        try:
+            sm_int = int(digits)
+        except ValueError:
+            continue
+        if sm_int >= 80:
+            return True
+
+    return False
+
+
 ROCM_HOME = (
     os.environ.get("ROCM_HOME")
     or os.environ.get("HIPSDK_PATH")
@@ -130,6 +216,10 @@ HIP_LIBRARY_DIRS = [
     os.path.join(ROCM_HOME, "hip", "lib64"),
 ]
 
+for extra_dir in os.environ.get("ROCM_EXTRA_LIB_DIRS", "").split(os.pathsep):
+    if extra_dir:
+        HIP_LIBRARY_DIRS.append(extra_dir)
+
 HIP_BIN_DIRS = [
     os.path.join(ROCM_HOME, "bin"),
 ]
@@ -147,6 +237,22 @@ HIP_LIBRARIES = [
     "rocblas",
     "hipblas",
 ]
+
+HIP_OPTIONAL_LIBRARIES: dict[str, list[str]] = {
+    "rocblaslt": ["librocblaslt.so*", "rocblaslt.dll", "librocblaslt.a"],
+    "hipblaslt": ["libhipblaslt.so*", "hipblaslt.dll", "libhipblaslt.a"],
+}
+
+
+def hip_library_exists(search_dirs: list[str], patterns: list[str]) -> bool:
+    for directory in search_dirs:
+        path = Path(directory)
+        if not path.is_dir():
+            continue
+        for pattern in patterns:
+            if any(path.glob(pattern)):
+                return True
+    return False
 
 
 def format_define(symbol: str) -> str:
@@ -174,7 +280,7 @@ def host_compile_flags(debug_enabled: bool) -> list[str]:
     return flags
 
 
-def cuda_device_flags(debug_enabled: bool, sm_targets: list[str]) -> list[str]:
+def cuda_device_flags(debug_enabled: bool, sm_targets: list[str], block_sparse_enabled: bool) -> list[str]:
     flags = [
         "-DENABLE_BF16=1",
         "-DBUILD_NUNCHAKU=1",
@@ -192,19 +298,22 @@ def cuda_device_flags(debug_enabled: bool, sm_targets: list[str]) -> list[str]:
         flags += ["-gencode", f"arch=compute_{target},code=sm_{target}"]
     if IS_WINDOWS:
         flags += ["-Xcompiler", "/Zc:__cplusplus", "-Xcompiler", "/FS", "-Xcompiler", "/bigobj"]
+    flags.append(f"-DNUNCHAKU_WITH_BLOCK_SPARSE={'1' if block_sparse_enabled else '0'}")
     return flags
 
 
-def hip_device_flags(debug_enabled: bool) -> list[str]:
+def hip_device_flags(debug_enabled: bool, hip_arches: list[str], block_sparse_enabled: bool) -> list[str]:
     flags = [
         "-DENABLE_BF16=1",
         "-DBUILD_NUNCHAKU=1",
         "-DNUNCHAKU_USE_HIP=1",
         "-std=c++20",
-        "--offload-arch=gfx1201",
         f"--rocm-path={ROCM_HOME}",
     ]
+    for arch in hip_arches:
+        flags.append(f"--offload-arch={arch}")
     flags.extend(["-O0", "-g"] if debug_enabled else ["-O3"])
+    flags.append(f"-DNUNCHAKU_WITH_BLOCK_SPARSE={'1' if block_sparse_enabled else '0'}")
     return flags
 
 
@@ -248,11 +357,13 @@ if __name__ == "__main__":
 
     debug_mode = DEBUG
 
-    host_flags = host_compile_flags(debug_mode)
-
     extra_include_dirs = INCLUDE_DIRS.copy()
     library_dirs: list[str] = []
     libraries: list[str] = []
+
+    hip_arches: list[str] = []
+    sm_targets: list[str] = []
+    block_sparse_available = False
 
     if USING_ROCM:
         hip_includes = [path for path in HIP_INCLUDE_DIRS if os.path.isdir(path)]
@@ -260,17 +371,32 @@ if __name__ == "__main__":
         extra_include_dirs.extend(hip_includes)
         library_dirs.extend(hip_libs)
         libraries.extend(HIP_LIBRARIES)
+        for lib_name, patterns in HIP_OPTIONAL_LIBRARIES.items():
+            if hip_library_exists(hip_libs, patterns):
+                libraries.append(lib_name)
 
     ExtensionImpl = HIPExtension if USING_ROCM else CUDAExtension
 
     if USING_ROCM:
-        device_flags = hip_device_flags(debug_mode)
-        sm_targets: list[str] = []
+        hip_arches = detect_hip_arches()
+        print(f"[nunchaku] Detected HIP targets: {hip_arches}", file=sys.stderr)
+        block_sparse_available = detect_block_sparse_support([], hip_arches, True)
+        device_flags = hip_device_flags(debug_mode, hip_arches, block_sparse_available)
+        sm_targets = []
     else:
         sm_targets = get_sm_targets()
         print(f"Detected SM targets: {sm_targets}", file=sys.stderr)
         assert len(sm_targets) > 0, "No SM targets found"
-        device_flags = cuda_device_flags(debug_mode, sm_targets)
+        block_sparse_available = detect_block_sparse_support(sm_targets, [], False)
+        device_flags = cuda_device_flags(debug_mode, sm_targets, block_sparse_available)
+
+    host_flags = host_compile_flags(debug_mode)
+    block_sparse_define = "NUNCHAKU_WITH_BLOCK_SPARSE=1" if block_sparse_available else "NUNCHAKU_WITH_BLOCK_SPARSE=0"
+    host_flags.append(format_define(block_sparse_define))
+    print(
+        f"[nunchaku] Block-sparse attention backend {'enabled' if block_sparse_available else 'disabled'}",
+        file=sys.stderr,
+    )
 
     extra_compile_args = {"cxx": host_flags}
     if USING_ROCM:
@@ -308,7 +434,7 @@ if __name__ == "__main__":
         "src/kernels/awq/gemv_awq.cu",
     ]
 
-    if not USING_ROCM:
+    if block_sparse_available:
         sources.extend(
             [
                 "third_party/Block-Sparse-Attention/csrc/block_sparse_attn/src/flash_fwd_hdim64_fp16_sm80.cu",

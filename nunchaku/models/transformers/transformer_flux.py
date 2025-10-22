@@ -19,6 +19,7 @@ from safetensors.torch import load_file
 from torch import nn
 
 from ..._C import QuantizedFluxModel
+from ..._C import has_block_sparse_attention as _HAS_BLOCK_SPARSE
 from ..._C import utils as cutils
 from ...lora.flux.nunchaku_converter import fuse_vectors, to_nunchaku
 from ...lora.flux.utils import is_nunchaku_format
@@ -26,6 +27,7 @@ from ...utils import check_hardware_compatibility, get_precision, load_state_dic
 from .utils import NunchakuModelLoaderMixin
 
 SVD_RANK = 32
+DEFAULT_ATTENTION_IMPL = "flashattn2" if _HAS_BLOCK_SPARSE else "nunchaku-fp16"
 
 # Get log level from environment variable (default to INFO)
 log_level = os.getenv("LOG_LEVEL", "INFO").upper()
@@ -645,7 +647,7 @@ class NunchakuFluxTransformer2dModel(FluxTransformer2DModel, NunchakuModelLoader
 
         return self
 
-    def set_attention_impl(self, impl: str):
+    def set_attention_impl(self, impl: str | None = "default"):
         """
         Set the attention implementation for the quantized transformer block.
 
@@ -654,11 +656,13 @@ class NunchakuFluxTransformer2dModel(FluxTransformer2DModel, NunchakuModelLoader
         impl : str
             Attention implementation to use. Supported values:
 
-            - ``"flashattn2"`` (default): Standard FlashAttention-2.
+            - ``"flashattn2"`` (default when FlashAttention-2 kernels are built): Standard FlashAttention-2.
             - ``"nunchaku-fp16"``: Uses FP16 attention accumulation, up to 1.2× faster than FlashAttention-2 on NVIDIA 30-, 40-, and 50-series GPUs.
         """
         block = self.transformer_blocks[0]
         assert isinstance(block, NunchakuFluxTransformerBlocks)
+        if impl in (None, "", "default"):
+            impl = DEFAULT_ATTENTION_IMPL
         block.m.setAttentionImpl(impl)
 
     ### LoRA Related Functions

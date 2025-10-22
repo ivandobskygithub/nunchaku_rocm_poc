@@ -15,6 +15,12 @@ enum class AttentionImpl {
     NunchakuFP16,
 };
 
+#if NUNCHAKU_WITH_BLOCK_SPARSE
+inline constexpr AttentionImpl kDefaultAttentionImpl = AttentionImpl::FlashAttention2;
+#else
+inline constexpr AttentionImpl kDefaultAttentionImpl = AttentionImpl::NunchakuFP16;
+#endif
+
 class AdaLayerNormZeroSingle : public Module {
 public:
     static constexpr bool USE_4BIT = true;
@@ -103,7 +109,7 @@ public:
     const int num_heads;
     const int mlp_hidden_dim;
 
-    AttentionImpl attnImpl = AttentionImpl::FlashAttention2;
+    AttentionImpl attnImpl = kDefaultAttentionImpl;
 
 private:
     AdaLayerNormZeroSingle norm;
@@ -153,7 +159,7 @@ public:
     const bool context_pre_only;
     AdaLayerNormZero norm1;
 
-    AttentionImpl attnImpl = AttentionImpl::FlashAttention2;
+    AttentionImpl attnImpl = kDefaultAttentionImpl;
 
 private:
     AdaLayerNormZero norm1_context;

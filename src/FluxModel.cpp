@@ -9,6 +9,7 @@
 #include <pybind11/functional.h>
 
 #include <iostream>
+#include <stdexcept>
 
 using spdlog::fmt_lib::format;
 using namespace nunchaku;
@@ -105,6 +106,11 @@ Attention::Attention(int num_heads, int dim_head, Device device)
 }
 
 Tensor Attention::forward(Tensor qkv) {
+#if !NUNCHAKU_WITH_BLOCK_SPARSE
+    throw std::runtime_error(
+        "Block-sparse attention backend is not available; select the 'nunchaku-fp16' attention implementation."
+    );
+#else
     assert(qkv.ndims() == 3);
 
     const Device device  = qkv.device();
@@ -125,9 +131,15 @@ Tensor Attention::forward(Tensor qkv) {
     assert(raw_attn_output.shape[3] == dim_head);
 
     return raw_attn_output.view({batch_size * num_tokens, num_heads, dim_head});
+#endif
 }
 
 Tensor Attention::forward(Tensor qkv, Tensor pool_qkv, float sparsityRatio) {
+#if !NUNCHAKU_WITH_BLOCK_SPARSE
+    throw std::runtime_error(
+        "Block-sparse attention with pooling requires FlashAttention2; rebuild with CUDA support or choose 'nunchaku-fp16'."
+    );
+#else
     const bool cast_fp16 = this->force_fp16 && qkv.scalar_type() != Tensor::FP16;
 
     assert(qkv.ndims() == 3);
@@ -264,6 +276,7 @@ Tensor Attention::forward(Tensor qkv, Tensor pool_qkv, float sparsityRatio) {
     assert(raw_attn_output.shape[2] == dim_head);
 
     return raw_attn_output;
+#endif
 }
 
 void Attention::setForceFP16(Module *module, bool value) {
