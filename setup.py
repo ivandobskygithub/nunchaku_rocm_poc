@@ -48,17 +48,16 @@ class CustomBuildExtension(BuildExtension):
                 print(f"[nunchaku] Warning: {dll} not found under {runtime_dirs}", file=sys.stderr)
 
 
-class HIPExtension(CUDAExtension):
-    def __init__(self, *args, **kwargs):
-        extra_compile_args = kwargs.get("extra_compile_args", {})
-        hipcc_args = extra_compile_args.get("hipcc")
-        if hipcc_args is not None:
-            hipcc_args = list(hipcc_args)
-            extra_compile_args["hipcc"] = hipcc_args
-            extra_compile_args.setdefault("nvcc", [])
-            extra_compile_args["nvcc"].extend(hipcc_args)
-            kwargs["extra_compile_args"] = extra_compile_args
-        super().__init__(*args, **kwargs)
+def HIPExtension(*args, **kwargs):
+    extra_compile_args = kwargs.get("extra_compile_args", {})
+    hipcc_args = extra_compile_args.get("hipcc")
+    if hipcc_args is not None:
+        hipcc_args = list(hipcc_args)
+        extra_compile_args["hipcc"] = hipcc_args
+        extra_compile_args.setdefault("nvcc", [])
+        extra_compile_args["nvcc"].extend(hipcc_args)
+        kwargs["extra_compile_args"] = extra_compile_args
+    return CUDAExtension(*args, **kwargs)
 
 
 def get_sm_targets() -> list[str]:
@@ -219,7 +218,7 @@ if __name__ == "__main__":
         version = version + date.today().strftime("%Y%m%d")  # data
     version = version + "+torch" + torch_major_minor_version
 
-    ROOT_DIR = os.path.dirname(__file__)
+    ROOT_DIR = Path(__file__).resolve().parent
 
     INCLUDE_DIRS = [
         "src",
@@ -230,7 +229,8 @@ if __name__ == "__main__":
         "third_party/Block-Sparse-Attention/csrc/block_sparse_attn",
     ]
 
-    INCLUDE_DIRS = [os.path.join(ROOT_DIR, dir) for dir in INCLUDE_DIRS]
+    INCLUDE_DIRS = [ROOT_DIR / dir for dir in INCLUDE_DIRS]
+    INCLUDE_DIRS = [str(path) for path in INCLUDE_DIRS]
 
     DEBUG = False
 
