@@ -2,6 +2,82 @@
 
 #include "dispatch_cutlass.h"
 
+#if defined(NUNCHAKU_USE_HIP)
+
+namespace {
+
+template<typename Scalar>
+__device__ inline float to_float(Scalar value);
+
+template<>
+__device__ inline float to_float<half>(half value) {
+    return __half2float(value);
+}
+
+#if defined(ENABLE_BF16)
+template<>
+__device__ inline float to_float<__nv_bfloat16>(__nv_bfloat16 value) {
+    return __bfloat162float(value);
+}
+#endif
+
+template<typename Scalar>
+__device__ inline Scalar from_float(float value);
+
+template<>
+__device__ inline half from_float<half>(float value) {
+    return __float2half(value);
+}
+
+#if defined(ENABLE_BF16)
+template<>
+__device__ inline __nv_bfloat16 from_float<__nv_bfloat16>(float value) {
+    return __float2bfloat16(value);
+}
+#endif
+
+template<typename Scalar>
+__global__ void gemm_f16_kernel(const Scalar *input,
+                                size_t lda,
+                                const Scalar *weight,
+                                size_t ldb,
+                                Scalar *out,
+                                size_t ldc,
+                                const Scalar *bias,
+                                int M,
+                                int N,
+                                int K,
+                                float alpha,
+                                bool has_bias) {
+    const int total = M * N;
+    const int linear_idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (linear_idx >= total) {
+        return;
+    }
+
+    const int row = linear_idx / N;
+    const int col = linear_idx - row * N;
+
+    const Scalar *row_input  = input + row * lda;
+    const Scalar *row_weight = weight + col * ldb;
+    float accum              = 0.0f;
+    for (int k = 0; k < K; ++k) {
+        accum += to_float(row_input[k]) * to_float(row_weight[k]);
+    }
+
+    float value = alpha * accum;
+    if (has_bias) {
+        value += to_float(bias[col]);
+    }
+
+    Scalar *row_out = out + row * ldc;
+    row_out[col]    = from_float<Scalar>(value);
+}
+
+} // namespace
+
+#else
+
 #include <cutlass/core_io.h>
 #include <cutlass/cutlass.h>
 #include <cutlass/half.h>
@@ -9,6 +85,8 @@
 
 #include <cutlass/gemm/device/gemm.h>
 #include <cutlass/numeric_types.h>
+
+#endif
 
 using spdlog::fmt_lib::format;
 
@@ -24,7 +102,40 @@ Tensor gemm_f16(Tensor input,  // FP16
 
     spdlog::debug("gemm_f16: M={} K={} N={}", M, K, N);
 
-    dispatchF16(weight.dtype(), [&]<typename half_t>() {
+    dispatchF16(weight.dtype(), [&]<typename scalar_t>() {
+#if defined(NUNCHAKU_USE_HIP)
+        using ElementInputA  = scalar_t;
+        using ElementInputB  = scalar_t;
+        using ElementOutput  = scalar_t;
+        const size_t lda     = input.stride(-2);
+        const size_t ldb     = weight.stride(-2);
+        const size_t ldc     = out.stride(-2);
+        const bool has_bias  = bias.valid();
+        const ElementOutput *bias_ptr = has_bias ? bias.data_ptr<ElementOutput>() : nullptr;
+
+        constexpr int Threads = 256;
+        const int blocks      = (int)((M * N + Threads - 1) / Threads);
+
+        hipLaunchKernelGGL((gemm_f16_kernel<ElementInputA>),
+                           dim3(blocks),
+                           dim3(Threads),
+                           0,
+                           getCurrentGpuStream(),
+                           input.data_ptr<ElementInputA>(),
+                           lda,
+                           weight.data_ptr<ElementInputB>(),
+                           ldb,
+                           out.data_ptr<ElementOutput>(),
+                           ldc,
+                           bias_ptr,
+                           M,
+                           N,
+                           K,
+                           alpha,
+                           has_bias);
+
+        gpu_runtime::check(gpu_runtime::getLastError());
+#else
         using ElementOutput          = half_t;
         using ElementAccumulator     = float;
         using ElementComputeEpilogue = half_t;
@@ -129,6 +240,7 @@ Tensor gemm_f16(Tensor input,  // FP16
         if (status != cutlass::Status::kSuccess) {
             throw std::runtime_error("cutlass cannot run");
         }
+#endif
     });
 
     return out;

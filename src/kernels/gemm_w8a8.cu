@@ -1,6 +1,18 @@
 #include "common.h"
 #include "Tensor.h"
 
+#if defined(NUNCHAKU_USE_HIP)
+
+Tensor gemm_w8a8_fp16(Tensor /*input*/,
+                      Tensor /*weight*/,
+                      Tensor /*out*/,
+                      half /*alpha*/,
+                      half /*beta*/) {
+    throw std::runtime_error("gemm_w8a8_fp16 is not yet implemented for ROCm builds");
+}
+
+#else
+
 #include <cutlass/core_io.h>
 #include <cutlass/cutlass.h>
 #include <cutlass/half.h>
@@ -158,3 +170,5 @@ Tensor gemm_w8a8_fp16(Tensor input,  // INT8
 
     return out;
 }
+
+#endif
