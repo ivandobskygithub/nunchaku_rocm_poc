@@ -10,6 +10,8 @@ from torch.utils import data
 from torchmetrics.image import LearnedPerceptualImagePatchSimilarity
 from tqdm import tqdm
 
+from nunchaku.accelerator import canonicalize_device
+
 
 def hash_str_to_int(s: str) -> int:
     """Hash a string to an integer."""
@@ -85,10 +87,11 @@ def compute_lpips(
     gen_dirpath_or_image_path: str,
     batch_size: int = 4,
     num_workers: int = 0,
-    device: str | torch.device = "cuda",
+    device: str | torch.device | None = None,
 ) -> float:
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
-    metric = LearnedPerceptualImagePatchSimilarity(normalize=True).to(device)
+    resolved_device = canonicalize_device(device) if torch.cuda.is_available() else torch.device("cpu")
+    metric = LearnedPerceptualImagePatchSimilarity(normalize=True).to(resolved_device)
     dataset = MultiImageDataset(gen_dirpath_or_image_path, ref_dirpath_or_image_path)
     dataloader = data.DataLoader(
         dataset, batch_size=batch_size, num_workers=num_workers, shuffle=False, drop_last=False
@@ -96,6 +99,6 @@ def compute_lpips(
     with torch.no_grad():
         desc = (os.path.basename(gen_dirpath_or_image_path)) + " LPIPS"
         for i, batch in enumerate(tqdm(dataloader, desc=desc)):
-            batch = [tensor.to(device) for tensor in batch]
+            batch = [tensor.to(resolved_device) for tensor in batch]
             metric.update(batch[0], batch[1])
     return metric.compute().item()

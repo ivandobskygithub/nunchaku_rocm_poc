@@ -6,6 +6,7 @@ from nunchaku import NunchakuFluxTransformer2dModel
 from nunchaku.caching.diffusers_adapters import apply_cache_on_pipe
 from nunchaku.models.ip_adapter.diffusers_adapters import apply_IPA_on_pipe
 from nunchaku.utils import get_precision
+from _accelerator import DEVICE, DEVICE_STR
 
 precision = get_precision()
 transformer = NunchakuFluxTransformer2dModel.from_pretrained(
@@ -13,7 +14,7 @@ transformer = NunchakuFluxTransformer2dModel.from_pretrained(
 )
 pipeline = FluxPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-dev", transformer=transformer, torch_dtype=torch.bfloat16
-).to("cuda")
+).to(DEVICE)
 
 pipeline.load_ip_adapter(
     pretrained_model_name_or_path_or_dict="XLabs-AI/flux-ip-adapter-v2",

@@ -6,6 +6,7 @@ from diffusers.pipelines.flux.pipeline_flux import FluxPipeline
 from nunchaku import NunchakuFluxTransformer2dModel
 from nunchaku.caching.teacache import TeaCache
 from nunchaku.utils import get_precision
+from _accelerator import DEVICE, DEVICE_STR
 
 precision = get_precision()  # auto-detect your precision is 'int4' or 'fp4' based on your GPU
 transformer = NunchakuFluxTransformer2dModel.from_pretrained(
@@ -13,7 +14,7 @@ transformer = NunchakuFluxTransformer2dModel.from_pretrained(
 )
 pipeline = FluxPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-dev", transformer=transformer, torch_dtype=torch.bfloat16
-).to("cuda")
+).to(DEVICE)
 start_time = time.time()
 
 prompts = [
@@ -29,7 +30,7 @@ with TeaCache(model=transformer, num_steps=50, rel_l1_thresh=0.3, enabled=True):
         guidance_scale=3.5,
         height=1024,
         width=1024,
-        generator=torch.Generator(device="cuda").manual_seed(0),
+        generator=torch.Generator(device=DEVICE_STR).manual_seed(0),
     ).images
 
 end_time = time.time()

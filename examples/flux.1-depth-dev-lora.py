@@ -5,6 +5,7 @@ from image_gen_aux import DepthPreprocessor
 
 from nunchaku import NunchakuFluxTransformer2dModel
 from nunchaku.utils import get_precision
+from _accelerator import DEVICE, DEVICE_STR
 
 precision = get_precision()  # auto-detect your precision is 'int4' or 'fp4' based on your GPU
 transformer = NunchakuFluxTransformer2dModel.from_pretrained(
@@ -12,7 +13,7 @@ transformer = NunchakuFluxTransformer2dModel.from_pretrained(
 )
 pipe = FluxControlPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-dev", transformer=transformer, torch_dtype=torch.bfloat16
-).to("cuda")
+).to(DEVICE)
 
 ### LoRA Related Code ###
 transformer.update_lora_params(

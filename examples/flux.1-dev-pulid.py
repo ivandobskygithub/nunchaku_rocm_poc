@@ -7,6 +7,7 @@ from nunchaku.models.pulid.pulid_forward import pulid_forward
 from nunchaku.models.transformers.transformer_flux import NunchakuFluxTransformer2dModel
 from nunchaku.pipeline.pipeline_flux_pulid import PuLIDFluxPipeline
 from nunchaku.utils import get_precision
+from _accelerator import DEVICE, DEVICE_STR
 
 precision = get_precision()
 transformer = NunchakuFluxTransformer2dModel.from_pretrained(
@@ -17,7 +18,7 @@ pipeline = PuLIDFluxPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-dev",
     transformer=transformer,
     torch_dtype=torch.bfloat16,
-).to("cuda")
+).to(DEVICE)
 
 pipeline.transformer.forward = MethodType(pulid_forward, pipeline.transformer)
 

@@ -2,6 +2,7 @@ import torch
 from diffusers import SanaPAGPipeline
 
 from nunchaku import NunchakuSanaTransformer2DModel
+from _accelerator import DEVICE, DEVICE_STR
 
 transformer = NunchakuSanaTransformer2DModel.from_pretrained(
     "nunchaku-tech/nunchaku-sana/svdq-int4_r32-sana1.6b.safetensors", pag_layers=8
@@ -12,7 +13,7 @@ pipe = SanaPAGPipeline.from_pretrained(
     variant="bf16",
     torch_dtype=torch.bfloat16,
     pag_applied_layers="transformer_blocks.8",
-).to("cuda")
+).to(DEVICE)
 pipe._set_pag_attn_processor = lambda *args, **kwargs: None
 
 pipe.text_encoder.to(torch.bfloat16)

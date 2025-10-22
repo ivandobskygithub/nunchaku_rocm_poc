@@ -4,6 +4,7 @@ from diffusers import FluxPipeline
 from nunchaku import NunchakuFluxTransformer2dModel
 from nunchaku.caching.diffusers_adapters import apply_cache_on_pipe
 from nunchaku.utils import get_precision
+from _accelerator import DEVICE, DEVICE_STR
 
 precision = get_precision()
 
@@ -14,7 +15,7 @@ transformer = NunchakuFluxTransformer2dModel.from_pretrained(
 
 pipeline = FluxPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-dev", transformer=transformer, torch_dtype=torch.bfloat16
-).to("cuda")
+).to(DEVICE)
 
 apply_cache_on_pipe(
     pipeline,
