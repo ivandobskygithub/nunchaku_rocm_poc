@@ -5,6 +5,7 @@ from diffusers.utils import load_image
 
 from nunchaku import NunchakuFluxTransformer2dModel
 from nunchaku.utils import get_gpu_memory, get_precision
+from _accelerator import DEVICE, DEVICE_STR
 
 base_model = "black-forest-labs/FLUX.1-dev"
 controlnet_model_union = "Shakker-Labs/FLUX.1-dev-ControlNet-Union-Pro"
@@ -28,7 +29,7 @@ pipeline = FluxControlNetPipeline.from_pretrained(
 if need_offload:
     pipeline.enable_sequential_cpu_offload()
 else:
-    pipeline = pipeline.to("cuda")
+    pipeline = pipeline.to(DEVICE)
 
 prompt = "A anime style girl with messy beach waves."
 control_image_depth = load_image(

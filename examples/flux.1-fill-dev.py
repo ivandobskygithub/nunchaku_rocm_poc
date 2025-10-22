@@ -4,6 +4,7 @@ from diffusers.utils import load_image
 
 from nunchaku import NunchakuFluxTransformer2dModel
 from nunchaku.utils import get_precision
+from _accelerator import DEVICE, DEVICE_STR
 
 image = load_image("https://huggingface.co/datasets/diffusers/diffusers-images-docs/resolve/main/cup.png")
 mask = load_image("https://huggingface.co/datasets/diffusers/diffusers-images-docs/resolve/main/cup_mask.png")
@@ -14,7 +15,7 @@ transformer = NunchakuFluxTransformer2dModel.from_pretrained(
 )
 pipe = FluxFillPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-Fill-dev", transformer=transformer, torch_dtype=torch.bfloat16
-).to("cuda")
+).to(DEVICE)
 image = pipe(
     prompt="a white paper cup",
     image=image,

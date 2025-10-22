@@ -13,6 +13,8 @@ import torch
 from huggingface_hub import hf_hub_download
 from torch import nn
 
+from .accelerator import canonicalize_device
+
 
 def pad_tensor(tensor: torch.Tensor | None, multiples: int, dim: int, fill: Any = 0) -> torch.Tensor | None:
     """
@@ -215,8 +217,7 @@ def get_precision(
     """
     assert precision in ("auto", "int4", "fp4")
     if precision == "auto":
-        if isinstance(device, str):
-            device = torch.device(device)
+        device = canonicalize_device(device)
         capability = torch.cuda.get_device_capability(0 if device.index is None else device.index)
         sm = f"{capability[0]}{capability[1]}"
         precision = "fp4" if sm == "120" else "int4"
@@ -244,8 +245,7 @@ def is_turing(device: str | torch.device = "cuda") -> bool:
     bool
         True if the current GPU is a Turing GPU, False otherwise.
     """
-    if isinstance(device, str):
-        device = torch.device(device)
+    device = canonicalize_device(device)
     device_id = 0 if device.index is None else device.index
     capability = torch.cuda.get_device_capability(device_id)
     sm = f"{capability[0]}{capability[1]}"
@@ -273,8 +273,7 @@ def get_gpu_memory(device: str | torch.device = "cuda", unit: str = "GiB") -> in
     AssertionError
         If unit is not one of "GiB", "MiB", or "B".
     """
-    if isinstance(device, str):
-        device = torch.device(device)
+    device = canonicalize_device(device)
     assert unit in ("GiB", "MiB", "B")
     memory = torch.cuda.get_device_properties(device).total_memory
     if unit == "GiB":
@@ -301,8 +300,7 @@ def check_hardware_compatibility(quantization_config: dict, device: str | torch.
     ValueError
         If the quantization config is not compatible with the GPU architecture.
     """
-    if isinstance(device, str):
-        device = torch.device(device)
+    device = canonicalize_device(device)
     capability = torch.cuda.get_device_capability(0 if device.index is None else device.index)
     sm = f"{capability[0]}{capability[1]}"
     if sm == "120":  # you can only use the fp4 models

@@ -2,6 +2,7 @@ import torch
 from diffusers import SanaPipeline
 
 from nunchaku import NunchakuSanaTransformer2DModel
+from _accelerator import DEVICE, DEVICE_STR
 
 transformer = NunchakuSanaTransformer2DModel.from_pretrained(
     "nunchaku-tech/nunchaku-sana/svdq-int4_r32-sana1.6b.safetensors"
@@ -11,7 +12,7 @@ pipe = SanaPipeline.from_pretrained(
     transformer=transformer,
     variant="bf16",
     torch_dtype=torch.bfloat16,
-).to("cuda")
+).to(DEVICE)
 pipe.vae.to(torch.bfloat16)
 pipe.text_encoder.to(torch.bfloat16)
 

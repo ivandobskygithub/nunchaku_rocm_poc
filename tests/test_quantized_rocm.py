@@ -3,20 +3,25 @@ import math
 import pytest
 import torch
 
+from nunchaku.accelerator import accelerator_device
+
 try:
     from nunchaku.ops.quantize import svdq_quantize_w4a4_act_fuse_lora_cuda
     _EXTENSION_AVAILABLE = True
 except ModuleNotFoundError:
     _EXTENSION_AVAILABLE = False
 
-HIP_NOT_AVAILABLE = torch.version.hip is None or not torch.cuda.is_available()
-pytestmark = pytest.mark.skipif(
-    HIP_NOT_AVAILABLE or not _EXTENSION_AVAILABLE, reason="ROCm extension runtime not available"
-)
+HIP_NOT_AVAILABLE = not torch.cuda.is_available()
+pytestmark = [
+    pytest.mark.skipif(
+        HIP_NOT_AVAILABLE or not _EXTENSION_AVAILABLE, reason="ROCm extension runtime not available"
+    ),
+    pytest.mark.hip,
+]
 
 
 def _make_inputs(batch_size: int, channels: int, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
-    device = torch.device("cuda")
+    device = accelerator_device()
     inp = torch.zeros(batch_size, channels, dtype=dtype, device=device)
     rank = 16
     lora_down = torch.zeros(channels, rank, dtype=dtype, device=device)

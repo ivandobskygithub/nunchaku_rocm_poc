@@ -3,6 +3,7 @@ from diffusers import FluxPipeline
 
 from nunchaku import NunchakuFluxTransformer2DModelV2
 from nunchaku.utils import get_precision
+from _accelerator import DEVICE, DEVICE_STR
 
 precision = get_precision()  # auto-detect your precision is 'int4' or 'fp4' based on your GPU
 transformer = NunchakuFluxTransformer2DModelV2.from_pretrained(
@@ -10,7 +11,7 @@ transformer = NunchakuFluxTransformer2DModelV2.from_pretrained(
 )
 pipeline = FluxPipeline.from_pretrained(
     "black-forest-labs/FLUX.1-krea-dev", torch_dtype=torch.bfloat16, transformer=transformer
-).to("cuda")
+).to(DEVICE)
 prompt = (
     "Tiny paper origami kingdom, a river flowing through a lush valley, bright saturated image,"
     "a fox to the left, deer to the right, birds in the sky, bushes and tress all around"
