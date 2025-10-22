@@ -9,6 +9,45 @@
 // #include "../../../nunchaku/csrc/utils.cuh"
 #include "../utils.cuh"
 
+#if defined(__HIP_PLATFORM_AMD__)
+
+#include "awq_hip_utils.h"
+
+#include <ATen/ATen.h>
+
+Tensor awq_gemm_forward_cuda(Tensor _in_feats, Tensor _kernel, Tensor _scales, Tensor _zeros) {
+    TorchOpContext ctx;
+
+    constexpr int kInterleave = 4;
+
+    auto input_t  = to_torch(_in_feats).contiguous();
+    auto kernel_t = to_torch(_kernel).contiguous();
+    auto scales_t = to_torch(_scales).contiguous();
+    auto zeros_t  = to_torch(_zeros).contiguous();
+
+    const auto input_dtype = input_t.scalar_type();
+    const auto device      = input_t.device();
+
+    const int in_features  = static_cast<int>(input_t.size(-1));
+    const int out_features = static_cast<int>(_kernel.size(0) * kInterleave);
+
+    auto weight_full = awq_hip::build_awq_weight(kernel_t, scales_t, zeros_t, 128).to(device);
+
+    auto input_f  = input_t.to(torch::kFloat32);
+    auto weight_f = weight_full.to(torch::kFloat32);
+
+    auto flat_input = input_f.view({-1, in_features});
+    auto output_f   = torch::matmul(flat_input, weight_f.transpose(0, 1));
+
+    auto output_shape = input_t.sizes().vec();
+    output_shape.back() = out_features;
+
+    auto result = output_f.view(output_shape).to(input_dtype);
+
+    return from_torch(result.to(device));
+}
+
+#else
 #if !defined(__HIP_PLATFORM_AMD__)
 #include <cuda_pipeline_primitives.h>
 #endif
@@ -1378,3 +1417,5 @@ Tensor awq_gemm_forward_cuda(Tensor _in_feats, Tensor _kernel, Tensor _scales, T
 
     return _out_feats;
 }
+
+#endif // defined(__HIP_PLATFORM_AMD__)

@@ -1,9 +1,12 @@
 #pragma once
 
 #include "interop/torch.h"
+#include "kernels/device_compat.h"
 #include "kernels/zgemm/zgemm.h"
 #include "kernels/awq/gemv_awq.h"
 #include "kernels/awq/gemm_awq.h"
+#include "kernels/gemm_w8a8.h"
+#include "kernels/dwconv.h"
 
 namespace nunchaku::ops {
 
@@ -157,6 +160,39 @@ gemm_awq(torch::Tensor _in_feats, torch::Tensor _kernel, torch::Tensor _scaling_
     // Tensor::synchronizeDevice();
 
     return output;
+}
+
+torch::Tensor gemm_w8a8_fp16(torch::Tensor input,
+                             torch::Tensor weight,
+                             std::optional<torch::Tensor> out,
+                             double alpha,
+                             double beta) {
+    TorchOpContext ctx;
+
+    Tensor input_t  = from_torch(input.contiguous());
+    Tensor weight_t = from_torch(weight.contiguous());
+    Tensor out_t    = out.has_value() ? from_torch(out.value().contiguous()) : Tensor{};
+
+    const half alpha_h = __float2half(static_cast<float>(alpha));
+    const half beta_h  = __float2half(static_cast<float>(beta));
+
+    Tensor result = ::gemm_w8a8_fp16(input_t, weight_t, out_t, alpha_h, beta_h);
+
+    return to_torch(result);
+}
+
+torch::Tensor dwconv_fp16(torch::Tensor input,
+                          torch::Tensor weight,
+                          std::optional<torch::Tensor> bias) {
+    TorchOpContext ctx;
+
+    Tensor input_t  = from_torch(input.contiguous());
+    Tensor weight_t = from_torch(weight.contiguous());
+    Tensor bias_t   = bias.has_value() ? from_torch(bias.value().contiguous()) : Tensor{};
+
+    Tensor result = ::dwconv_f16(input_t, weight_t, Tensor{}, bias_t);
+
+    return to_torch(result);
 }
 
 void test_rmsnorm_rope(

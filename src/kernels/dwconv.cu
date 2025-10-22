@@ -3,8 +3,48 @@
 
 #if defined(NUNCHAKU_USE_HIP)
 
-Tensor dwconv_f16(Tensor /*input*/, Tensor /*weight*/, Tensor /*out*/, Tensor /*bias*/) {
-    throw std::runtime_error("Depthwise convolution is not yet supported on HIP");
+#include "interop/torch.h"
+
+#include <ATen/ATen.h>
+
+Tensor dwconv_f16(Tensor input, Tensor weight, Tensor out, Tensor bias) {
+    TorchOpContext ctx;
+
+    auto input_t  = to_torch(input).contiguous();
+    auto weight_t = to_torch(weight).contiguous();
+
+    auto input_dtype = input_t.scalar_type();
+    auto device      = input_t.device();
+
+    input_t  = input_t.permute({0, 3, 1, 2});
+    weight_t = weight_t.permute({0, 3, 1, 2});
+
+    auto input_f  = input_t.to(torch::kFloat32);
+    auto weight_f = weight_t.to(torch::kFloat32);
+
+    at::Tensor bias_t;
+    if (bias.valid()) {
+        bias_t = to_torch(bias).to(torch::kFloat32).contiguous();
+    }
+
+    const int groups = input.size(3);
+
+    auto result = torch::conv2d(input_f,
+                                weight_f,
+                                bias.valid() ? bias_t : at::Tensor(),
+                                {1, 1},
+                                {1, 1},
+                                {1, 1},
+                                groups);
+
+    auto result_cast = result.to(input_dtype).permute({0, 2, 3, 1}).contiguous().to(device);
+
+    if (out.valid()) {
+        out.copy_(from_torch(result_cast));
+        return out;
+    }
+
+    return from_torch(result_cast);
 }
 
 #else
