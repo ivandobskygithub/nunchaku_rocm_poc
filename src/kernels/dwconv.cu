@@ -3,48 +3,113 @@
 
 #if defined(NUNCHAKU_USE_HIP)
 
-#include "interop/torch.h"
+#include "device_compat.h"
 
-#include <ATen/ATen.h>
+namespace {
+
+__global__ void depthwise_conv2d_nhwc_kernel(const half *input,
+                                             const half *weight,
+                                             const half *bias,
+                                             half *output,
+                                             int N,
+                                             int H,
+                                             int W,
+                                             int C,
+                                             int R,
+                                             int S,
+                                             bool has_bias) {
+    const int total = N * H * W * C;
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= total) {
+        return;
+    }
+
+    int tmp = index;
+    const int c = tmp % C;
+    tmp /= C;
+    const int w = tmp % W;
+    tmp /= W;
+    const int h = tmp % H;
+    const int n = tmp / H;
+
+    const int pad_h = R / 2;
+    const int pad_w = S / 2;
+
+    float acc = has_bias ? __half2float(bias[c]) : 0.0f;
+
+    for (int r = 0; r < R; ++r) {
+        const int in_h = h + r - pad_h;
+        if (in_h < 0 || in_h >= H) {
+            continue;
+        }
+        for (int s_idx = 0; s_idx < S; ++s_idx) {
+            const int in_w = w + s_idx - pad_w;
+            if (in_w < 0 || in_w >= W) {
+                continue;
+            }
+            const int input_idx = ((n * H + in_h) * W + in_w) * C + c;
+            const int weight_idx = ((c * R + r) * S) + s_idx;
+            const float in_val    = __half2float(input[input_idx]);
+            const float weight_val = __half2float(weight[weight_idx]);
+            acc += in_val * weight_val;
+        }
+    }
+
+    output[index] = __float2half(acc);
+}
+
+} // namespace
 
 Tensor dwconv_f16(Tensor input, Tensor weight, Tensor out, Tensor bias) {
-    TorchOpContext ctx;
+    assert(input.ndims() == 4);
+    assert(weight.ndims() == 4);
 
-    auto input_t  = to_torch(input).contiguous();
-    auto weight_t = to_torch(weight).contiguous();
+    const int N = input.size(0);
+    const int H = input.size(1);
+    const int W = input.size(2);
+    const int C = input.size(3);
 
-    auto input_dtype = input_t.scalar_type();
-    auto device      = input_t.device();
+    const int K = weight.size(0);
+    const int R = weight.size(1);
+    const int S = weight.size(2);
+    const int channel_multiplier = weight.size(3);
 
-    input_t  = input_t.permute({0, 3, 1, 2});
-    weight_t = weight_t.permute({0, 3, 1, 2});
+    assert(channel_multiplier == 1);
+    assert(K == C);
 
-    auto input_f  = input_t.to(torch::kFloat32);
-    auto weight_f = weight_t.to(torch::kFloat32);
-
-    at::Tensor bias_t;
-    if (bias.valid()) {
-        bias_t = to_torch(bias).to(torch::kFloat32).contiguous();
+    if (!out.valid()) {
+        out = Tensor::empty({N, H, W, K * channel_multiplier}, input.scalarType(), input.device());
     }
 
-    const int groups = input.size(3);
+    auto *input_ptr  = input.data_ptr<half>();
+    auto *weight_ptr = weight.data_ptr<half>();
+    auto *out_ptr    = out.data_ptr<half>();
+    const half *bias_ptr = bias.valid() ? bias.data_ptr<half>() : nullptr;
 
-    auto result = torch::conv2d(input_f,
-                                weight_f,
-                                bias.valid() ? bias_t : at::Tensor(),
-                                {1, 1},
-                                {1, 1},
-                                {1, 1},
-                                groups);
+    const int total = N * H * W * C;
+    constexpr int threads_per_block = 256;
+    dim3 block(threads_per_block);
+    dim3 grid((total + threads_per_block - 1) / threads_per_block);
 
-    auto result_cast = result.to(input_dtype).permute({0, 2, 3, 1}).contiguous().to(device);
+    hipLaunchKernelGGL(depthwise_conv2d_nhwc_kernel,
+                       grid,
+                       block,
+                       0,
+                       getCurrentGpuStream(),
+                       input_ptr,
+                       weight_ptr,
+                       bias_ptr,
+                       out_ptr,
+                       N,
+                       H,
+                       W,
+                       C,
+                       R,
+                       S,
+                       bias_ptr != nullptr);
+    checkCUDA(gpu_runtime::getLastError());
 
-    if (out.valid()) {
-        out.copy_(from_torch(result_cast));
-        return out;
-    }
-
-    return from_torch(result_cast);
+    return out;
 }
 
 #else

@@ -35,9 +35,152 @@
 
 #if defined(__HIP_PLATFORM_AMD__)
 
-#include "awq_hip_utils.h"
+#include "device_compat.h"
 
-#include <ATen/ATen.h>
+namespace {
+
+constexpr int kInterleave = 4;
+
+__device__ __forceinline__ int compute_ic_div64(int in_features) {
+    int value = in_features / 64;
+    return value > 0 ? value : 1;
+}
+
+__global__ void dequantize_awq_kernel(const int32_t *packed,
+                                      const half *scales,
+                                      const half *zeros,
+                                      half *dequantized,
+                                      int rows,
+                                      int cols,
+                                      int in_features,
+                                      int group_size,
+                                      int padded_groups,
+                                      int scale_stride) {
+    const int out_features = rows * kInterleave;
+    const int total        = out_features * in_features;
+    const int idx          = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total) {
+        return;
+    }
+
+    const int oc_idx = idx / in_features;
+    const int ic_idx = idx % in_features;
+
+    const int block     = idx / 32;
+    const int offset    = idx % 32;
+    const int nibble    = offset / 8;
+    const int j         = offset % 8;
+    const int index1    = block * 8 + j;
+    const int d         = index1 % 16;
+    const int tmp       = index1 / 16;
+    const int ic_div64  = compute_ic_div64(in_features);
+    const int c         = tmp % ic_div64;
+    const int row4b     = tmp / ic_div64;
+    const int row       = row4b / 4;
+    const int b         = row4b % 4;
+    const int col_index = ((c * 4 + b) * 16) + d;
+
+    if (row >= rows || col_index >= cols) {
+        dequantized[idx] = __float2half(0.0f);
+        return;
+    }
+
+    const uint16_t packed_val = static_cast<uint16_t>(packed[row * cols + col_index] & 0xFFFF);
+    const int nibble_val      = (packed_val >> (4 * nibble)) & 0xF;
+
+    if (padded_groups <= 0) {
+        dequantized[idx] = __float2half(0.0f);
+        return;
+    }
+
+    const int effective_group = group_size > 0 ? group_size : in_features;
+    int group_idx              = ic_idx / effective_group;
+    if (group_idx < 0) {
+        group_idx = 0;
+    }
+    if (group_idx >= padded_groups) {
+        group_idx = padded_groups - 1;
+    }
+
+    const float scale = __half2float(scales[group_idx * scale_stride + oc_idx]);
+    const float zero  = __half2float(zeros[group_idx * scale_stride + oc_idx]);
+
+    dequantized[idx] = __float2half(nibble_val * scale + zero);
+}
+
+__global__ void gemm_fp16_kernel(const half *input,
+                                 const half *weight,
+                                 half *output,
+                                 int M,
+                                 int N,
+                                 int K) {
+    const int col = blockIdx.x * blockDim.x + threadIdx.x;
+    const int row = blockIdx.y * blockDim.y + threadIdx.y;
+    if (row >= M || col >= N) {
+        return;
+    }
+
+    float acc = 0.0f;
+    for (int k_idx = 0; k_idx < K; ++k_idx) {
+        const float a_val = __half2float(input[row * K + k_idx]);
+        const float b_val = __half2float(weight[col * K + k_idx]);
+        acc += a_val * b_val;
+    }
+
+    output[row * N + col] = __float2half(acc);
+}
+
+inline void launch_dequantize(const int32_t *packed,
+                              const half *scales,
+                              const half *zeros,
+                              half *dequantized,
+                              int rows,
+                              int cols,
+                              int in_features,
+                              int group_size,
+                              int padded_groups,
+                              int scale_stride) {
+    const int out_features = rows * kInterleave;
+    const int total        = out_features * in_features;
+    constexpr int threads  = 256;
+    dim3 block(threads);
+    dim3 grid((total + threads - 1) / threads);
+    hipLaunchKernelGGL(dequantize_awq_kernel,
+                       grid,
+                       block,
+                       0,
+                       getCurrentGpuStream(),
+                       packed,
+                       scales,
+                       zeros,
+                       dequantized,
+                       rows,
+                       cols,
+                       in_features,
+                       group_size,
+                       padded_groups,
+                       scale_stride);
+    checkCUDA(gpu_runtime::getLastError());
+}
+
+inline void launch_gemm(const half *input, const half *weight, half *output, int M, int N, int K) {
+    dim3 block(16, 16);
+    dim3 grid((N + block.x - 1) / block.x, (M + block.y - 1) / block.y);
+    hipLaunchKernelGGL(gemm_fp16_kernel,
+                       grid,
+                       block,
+                       0,
+                       getCurrentGpuStream(),
+                       input,
+                       weight,
+                       output,
+                       M,
+                       N,
+                       K);
+    checkCUDA(gpu_runtime::getLastError());
+}
+
+} // namespace
 
 Tensor gemv_awq(Tensor _in_feats,
                 Tensor _kernel,
@@ -47,32 +190,43 @@ Tensor gemv_awq(Tensor _in_feats,
                 int n,
                 int k,
                 int group_size) {
-    TorchOpContext ctx;
+    const int rows         = _kernel.size(0);
+    const int cols         = _kernel.size(1);
+    const int in_features  = k;
+    const int out_features = rows * kInterleave;
+    const int padded_groups = _scaling_factors.size(0);
+    const int scale_stride  = _scaling_factors.size(1);
 
-    (void)m;
+    assert(out_features == n);
 
-    auto input_t  = to_torch(_in_feats).contiguous();
-    auto kernel_t = to_torch(_kernel).contiguous();
-    auto scales_t = to_torch(_scaling_factors).contiguous();
-    auto zeros_t  = to_torch(_zeros).contiguous();
+    auto output_shape   = _in_feats.shape.dataExtent;
+    output_shape.back() = out_features;
 
-    auto input_dtype = input_t.scalar_type();
-    auto device      = input_t.device();
+    Tensor dequantized = Tensor::empty({out_features, in_features}, Tensor::FP16, _kernel.device());
 
-    auto weight_full = awq_hip::build_awq_weight(kernel_t, scales_t, zeros_t, group_size).to(device);
+    launch_dequantize(_kernel.data_ptr<int32_t>(),
+                      _scaling_factors.data_ptr<half>(),
+                      _zeros.data_ptr<half>(),
+                      dequantized.data_ptr<half>(),
+                      rows,
+                      cols,
+                      in_features,
+                      group_size,
+                      padded_groups,
+                      scale_stride);
 
-    auto input_f  = input_t.to(torch::kFloat32);
-    auto weight_f = weight_full.to(torch::kFloat32);
+    const int computed_m = _in_feats.numel() / in_features;
+    assert(computed_m == m);
 
-    auto flat_input = input_f.view({-1, k});
-    auto output_f   = torch::matmul(flat_input, weight_f.transpose(0, 1));
+    Tensor out = Tensor::empty(output_shape, _in_feats.scalarType(), _in_feats.device());
+    launch_gemm(_in_feats.data_ptr<half>(),
+                dequantized.data_ptr<half>(),
+                out.data_ptr<half>(),
+                computed_m,
+                out_features,
+                in_features);
 
-    auto output_shape = input_t.sizes().vec();
-    output_shape.back() = n;
-
-    auto result = output_f.view(output_shape).to(input_dtype);
-
-    return from_torch(result.to(device));
+    return out;
 }
 
 #else

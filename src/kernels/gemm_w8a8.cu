@@ -3,18 +3,44 @@
 
 #if defined(NUNCHAKU_USE_HIP)
 
-#include "interop/torch.h"
-
-#include <ATen/ATen.h>
+#include "device_compat.h"
 
 namespace {
 
+__global__ void gemm_w8a8_fp16_kernel(const int8_t *input,
+                                      const int8_t *weight,
+                                      const half *beta_src,
+                                      half *output,
+                                      int M,
+                                      int N,
+                                      int K,
+                                      float alpha,
+                                      float beta,
+                                      bool has_beta) {
+    const int col = blockIdx.x * blockDim.x + threadIdx.x;
+    const int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (row >= M || col >= N) {
+        return;
+    }
+
+    int32_t acc = 0;
+    for (int k = 0; k < K; ++k) {
+        const int a_val = static_cast<int>(input[row * K + k]);
+        const int b_val = static_cast<int>(weight[col * K + k]);
+        acc += a_val * b_val;
+    }
+
+    float result = alpha * static_cast<float>(acc);
+    if (has_beta) {
+        result += beta * __half2float(beta_src[row * N + col]);
+    }
+
+    output[row * N + col] = __float2half(result);
+}
+
 inline float half_to_float(half value) {
-#if defined(__HIP_PLATFORM_AMD__)
     return __half2float(value);
-#else
-    return __half2float(value);
-#endif
 }
 
 } // namespace
@@ -24,39 +50,46 @@ Tensor gemm_w8a8_fp16(Tensor input,
                       Tensor out,
                       half alpha,
                       half beta) {
-    TorchOpContext ctx;
+    const int N = weight.size(0);
+    const int K = input.size(-1);
+    const int M = input.numel() / K;
 
-    auto input_t  = to_torch(input).contiguous();
-    auto weight_t = to_torch(weight).contiguous();
+    if (!out.valid()) {
+        auto out_shape = input.shape.dataExtent;
+        out_shape.back() = N;
+        out               = Tensor::empty(out_shape, Tensor::FP16, input.device());
+    }
 
-    auto input_dtype = input_t.scalar_type();
-    auto device      = input_t.device();
-
-    auto input_f  = input_t.to(torch::kFloat32);
-    auto weight_f = weight_t.to(torch::kFloat32);
-
-    auto product = torch::matmul(input_f, weight_f.transpose(-1, -2));
+    auto *input_ptr  = input.data_ptr<int8_t>();
+    auto *weight_ptr = weight.data_ptr<int8_t>();
+    auto *out_ptr    = out.data_ptr<half>();
 
     const float alpha_f = half_to_float(alpha);
     const float beta_f  = half_to_float(beta);
+    const bool has_beta = beta_f != 0.0f;
+    const half *beta_src = has_beta ? out_ptr : nullptr;
 
-    product.mul_(alpha_f);
+    dim3 block(16, 16);
+    dim3 grid((N + block.x - 1) / block.x, (M + block.y - 1) / block.y);
 
-    at::Tensor result_f = product;
+    hipLaunchKernelGGL(gemm_w8a8_fp16_kernel,
+                       grid,
+                       block,
+                       0,
+                       getCurrentGpuStream(),
+                       input_ptr,
+                       weight_ptr,
+                       beta_src,
+                       out_ptr,
+                       M,
+                       N,
+                       K,
+                       alpha_f,
+                       beta_f,
+                       has_beta);
+    checkCUDA(gpu_runtime::getLastError());
 
-    if (out.valid() && beta_f != 0.0f) {
-        auto out_t = to_torch(out).to(torch::kFloat32).contiguous();
-        result_f.add_(out_t, beta_f);
-    }
-
-    auto result_t = result_f.to(input_dtype).to(device);
-
-    if (out.valid()) {
-        out.copy_(from_torch(result_t));
-        return out;
-    }
-
-    return from_torch(result_t);
+    return out;
 }
 
 #else
