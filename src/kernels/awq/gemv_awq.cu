@@ -33,6 +33,50 @@
 #include <stdio.h>
 #include "dequantize.cuh"
 
+#if defined(__HIP_PLATFORM_AMD__)
+
+#include "awq_hip_utils.h"
+
+#include <ATen/ATen.h>
+
+Tensor gemv_awq(Tensor _in_feats,
+                Tensor _kernel,
+                Tensor _scaling_factors,
+                Tensor _zeros,
+                int m,
+                int n,
+                int k,
+                int group_size) {
+    TorchOpContext ctx;
+
+    (void)m;
+
+    auto input_t  = to_torch(_in_feats).contiguous();
+    auto kernel_t = to_torch(_kernel).contiguous();
+    auto scales_t = to_torch(_scaling_factors).contiguous();
+    auto zeros_t  = to_torch(_zeros).contiguous();
+
+    auto input_dtype = input_t.scalar_type();
+    auto device      = input_t.device();
+
+    auto weight_full = awq_hip::build_awq_weight(kernel_t, scales_t, zeros_t, group_size).to(device);
+
+    auto input_f  = input_t.to(torch::kFloat32);
+    auto weight_f = weight_full.to(torch::kFloat32);
+
+    auto flat_input = input_f.view({-1, k});
+    auto output_f   = torch::matmul(flat_input, weight_f.transpose(0, 1));
+
+    auto output_shape = input_t.sizes().vec();
+    output_shape.back() = n;
+
+    auto result = output_f.view(output_shape).to(input_dtype);
+
+    return from_torch(result.to(device));
+}
+
+#else
+
 #define PACK_FACTOR 8
 #define WARP_SIZE 32
 #define MEM_ACCESS_SIZE 128
@@ -290,3 +334,5 @@ Tensor gemv_awq(
         return _out_feats;
     });
 }
+
+#endif // defined(__HIP_PLATFORM_AMD__)

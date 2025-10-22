@@ -116,6 +116,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
         .def("attention_fp16", nunchaku::ops::attention_fp16)
         .def("gemm_awq", nunchaku::ops::gemm_awq)
         .def("gemv_awq", nunchaku::ops::gemv_awq)
+        .def("gemm_w8a8_fp16", nunchaku::ops::gemm_w8a8_fp16,
+             py::arg("input"),
+             py::arg("weight"),
+             py::arg("out") = py::none(),
+             py::arg("alpha") = 1.0,
+             py::arg("beta")  = 0.0)
+        .def("dwconv_fp16", nunchaku::ops::dwconv_fp16,
+             py::arg("input"),
+             py::arg("weight"),
+             py::arg("bias") = py::none())
 
         .def("test_rmsnorm_rope", nunchaku::ops::test_rmsnorm_rope)
         .def("test_pack_qkv", nunchaku::ops::test_pack_qkv);

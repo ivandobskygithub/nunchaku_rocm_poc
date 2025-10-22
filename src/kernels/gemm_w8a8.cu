@@ -3,12 +3,60 @@
 
 #if defined(NUNCHAKU_USE_HIP)
 
-Tensor gemm_w8a8_fp16(Tensor /*input*/,
-                      Tensor /*weight*/,
-                      Tensor /*out*/,
-                      half /*alpha*/,
-                      half /*beta*/) {
-    throw std::runtime_error("gemm_w8a8_fp16 is not yet implemented for ROCm builds");
+#include "interop/torch.h"
+
+#include <ATen/ATen.h>
+
+namespace {
+
+inline float half_to_float(half value) {
+#if defined(__HIP_PLATFORM_AMD__)
+    return __half2float(value);
+#else
+    return __half2float(value);
+#endif
+}
+
+} // namespace
+
+Tensor gemm_w8a8_fp16(Tensor input,
+                      Tensor weight,
+                      Tensor out,
+                      half alpha,
+                      half beta) {
+    TorchOpContext ctx;
+
+    auto input_t  = to_torch(input).contiguous();
+    auto weight_t = to_torch(weight).contiguous();
+
+    auto input_dtype = input_t.scalar_type();
+    auto device      = input_t.device();
+
+    auto input_f  = input_t.to(torch::kFloat32);
+    auto weight_f = weight_t.to(torch::kFloat32);
+
+    auto product = torch::matmul(input_f, weight_f.transpose(-1, -2));
+
+    const float alpha_f = half_to_float(alpha);
+    const float beta_f  = half_to_float(beta);
+
+    product.mul_(alpha_f);
+
+    at::Tensor result_f = product;
+
+    if (out.valid() && beta_f != 0.0f) {
+        auto out_t = to_torch(out).to(torch::kFloat32).contiguous();
+        result_f.add_(out_t, beta_f);
+    }
+
+    auto result_t = result_f.to(input_dtype).to(device);
+
+    if (out.valid()) {
+        out.copy_(from_torch(result_t));
+        return out;
+    }
+
+    return from_torch(result_t);
 }
 
 #else
