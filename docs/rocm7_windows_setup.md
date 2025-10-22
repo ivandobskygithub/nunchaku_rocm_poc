@@ -75,13 +75,25 @@ setx PATH "%ROCM_HOME%\bin;%PATH%"
 
 After updating `PATH`, restart the terminal to pick up the changes.
 
+If you keep additional ROCm builds or custom libraries outside of `%ROCM_HOME%`, append them via:
+
+```
+setx ROCM_EXTRA_LIB_DIRS "D:\rocm\lib64"
+setx ROCM_EXTRA_BIN_DIRS "D:\rocm\bin"
+```
+
+These variables are optional but help `setup.py` locate preview builds of `rocblaslt`/`hipblaslt` without copying DLLs into the
+repository.
+
 ## 6. Build the HIP extension
 
 1. From the repository root, build the wheel in release mode:
    ```powershell
    python -m build
    ```
-   The HIP branch of `setup.py` detects `ROCM_HOME`, defines `NUNCHAKU_USE_HIP`, and invokes `hipcc` with the `--offload-arch=gfx1201` flag.
+   The HIP branch of `setup.py` detects `ROCM_HOME`, defines `NUNCHAKU_USE_HIP`, and enumerates the installed GPUs to emit a
+   `--offload-arch=<gfx>` flag per device (multi-GPU hosts receive one entry per architecture). Override the detected list by
+   exporting `NUNCHAKU_HIP_ARCHES` before invoking the build.
 2. On Windows, the custom `build_ext` step bundles `amdhip64.dll`, `hiprtc.dll`, and `hiprtc-builtins.dll` into the wheel directory. Verify these files are present in `build\lib\nunchaku`.
 3. Install the generated wheel into your virtual environment:
    ```powershell
@@ -148,6 +160,7 @@ export PATH="$ROCM_HOME/bin:$PATH"
 export LD_LIBRARY_PATH="$ROCM_HOME/lib:$ROCM_HOME/lib64:$LD_LIBRARY_PATH"
 # Optional: point the build system at out-of-tree libraries
 export ROCM_EXTRA_LIB_DIRS="$HOME/rocm/lib"
+export ROCM_EXTRA_BIN_DIRS="$HOME/rocm/bin"
 ```
 
 Reload your shell (`source ~/.bashrc`) after editing the file.
@@ -163,6 +176,13 @@ python - <<'PY'
 import torch
 assert torch.version.hip, "PyTorch was not compiled with HIP support"
 print("HIP devices:", [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())])
+import importlib.util
+import pathlib
+spec = importlib.util.spec_from_file_location("nunchaku_setup", pathlib.Path("setup.py"))
+module = importlib.util.module_from_spec(spec)
+assert spec.loader is not None
+spec.loader.exec_module(module)
+print("Detected gfx targets:", module.detect_hip_arches())
 PY
 ```
 
@@ -215,6 +235,7 @@ PY
 - If `rocminfo` fails with permission errors, verify your user is in the `video` group and that Secure Boot is configured according to AMD's ROCm documentation.
 - To force a specific architecture list, set `NUNCHAKU_HIP_ARCHES="gfx942,gfx940"` before invoking `python -m build`.
 - Missing `rocblaslt`/`hipblaslt` libraries can be resolved by installing the `rocblaslt` and `hipblaslt` packages or by pointing `ROCM_EXTRA_LIB_DIRS` at custom build locations.
+- Block-sparse attention is disabled on ROCm unless HIP kernels and the `rocblaslt`/`hipblaslt` libraries are detected. Review the build log for the `[nunchaku]` messages describing the capability check before enabling it manually via `NUNCHAKU_BLOCK_SPARSE=1`.
 
 ## 10. Future automation ideas
 

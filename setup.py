@@ -14,6 +14,9 @@ from torch.utils.cpp_extension import ROCM_HOME as TORCH_ROCM_HOME
 import torch.utils.cpp_extension as torch_cpp_extension
 
 
+ROOT_DIR = Path(__file__).resolve().parent
+
+
 class CustomBuildExtension(BuildExtension):
     def build_extensions(self):
         for ext in self.extensions:
@@ -158,12 +161,73 @@ def detect_hip_arches() -> list[str]:
     return [fallback_arch]
 
 
+def _hip_block_sparse_backend_available() -> bool:
+    override = os.environ.get("NUNCHAKU_HIP_BLOCK_SPARSE_DIR")
+    candidates: list[Path] = []
+    if override:
+        candidates.append(Path(override))
+
+    candidates.extend(
+        [
+            ROOT_DIR / "third_party" / "Block-Sparse-Attention" / "csrc" / "block_sparse_attn" / "hip",
+            ROOT_DIR
+            / "third_party"
+            / "Block-Sparse-Attention"
+            / "csrc"
+            / "block_sparse_attn"
+            / "src"
+            / "hip",
+        ]
+    )
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            path = candidate.expanduser().resolve()
+        except (FileNotFoundError, OSError):
+            continue
+        if path.is_file():
+            return True
+        if path.is_dir():
+            try:
+                next(path.rglob("*"))
+            except (StopIteration, OSError):
+                continue
+            else:
+                return True
+    return False
+
+
 def detect_block_sparse_support(sm_targets: list[str], hip_arches: list[str], is_rocm: bool) -> bool:
     override = os.environ.get("NUNCHAKU_BLOCK_SPARSE")
     if override is not None:
         return override.strip().lower() in {"1", "true", "yes", "on"}
 
     if is_rocm:
+        hip_arch_bases = {arch.split(":", 1)[0] for arch in hip_arches}
+        supported_hip_arches = hip_arch_bases & HIP_BLOCK_SPARSE_SUPPORTED_ARCHES
+        backend_available = _hip_block_sparse_backend_available()
+        if supported_hip_arches and backend_available:
+            return True
+
+        reasons: list[str] = []
+        if not hip_arch_bases:
+            reasons.append("no HIP devices detected")
+        elif not supported_hip_arches:
+            reasons.append(
+                "supported gfx architecture not detected (requires one of "
+                + ", ".join(sorted(HIP_BLOCK_SPARSE_SUPPORTED_ARCHES))
+                + ")"
+            )
+        if not backend_available:
+            reasons.append("HIP block-sparse backend sources not found")
+        if reasons:
+            print(
+                "[nunchaku] Disabling block-sparse attention on ROCm: "
+                + "; ".join(reasons),
+                file=sys.stderr,
+            )
         return False
 
     for target in sm_targets:
@@ -195,41 +259,6 @@ HIP_LIBRARY_DIRS: list[str] = []
 HIP_BIN_DIRS: list[str] = []
 HIP_RUNTIME_DLLS: list[str] = []
 
-if USING_ROCM:
-    torch_cpp_extension.IS_HIP_EXTENSION = True
-    os.environ.setdefault("ROCM_HOME", ROCM_HOME)
-    os.environ.setdefault("ROCM_PATH", ROCM_HOME)
-    os.environ.setdefault("HIP_PATH", ROCM_HOME)
-    os.environ.setdefault("HIPSDK_PATH", ROCM_HOME)
-    os.environ.setdefault("HIP_SDK_PATH", ROCM_HOME)
-
-HIP_INCLUDE_DIRS = [
-    os.path.join(ROCM_HOME, "include"),
-    os.path.join(ROCM_HOME, "hip", "include"),
-    os.path.join(ROCM_HOME, "llvm", "include"),
-]
-
-HIP_LIBRARY_DIRS = [
-    os.path.join(ROCM_HOME, "lib"),
-    os.path.join(ROCM_HOME, "lib64"),
-    os.path.join(ROCM_HOME, "hip", "lib"),
-    os.path.join(ROCM_HOME, "hip", "lib64"),
-]
-
-for extra_dir in os.environ.get("ROCM_EXTRA_LIB_DIRS", "").split(os.pathsep):
-    if extra_dir:
-        HIP_LIBRARY_DIRS.append(extra_dir)
-
-HIP_BIN_DIRS = [
-    os.path.join(ROCM_HOME, "bin"),
-]
-
-HIP_RUNTIME_DLLS = [
-    "amdhip64.dll",
-    "hiprtc.dll",
-    "hiprtc-builtins.dll",
-]
-
 HIP_LIBRARIES = [
     "amdhip64",
     "hiprtc",
@@ -242,6 +271,64 @@ HIP_OPTIONAL_LIBRARIES: dict[str, list[str]] = {
     "rocblaslt": ["librocblaslt.so*", "rocblaslt.dll", "librocblaslt.a"],
     "hipblaslt": ["libhipblaslt.so*", "hipblaslt.dll", "libhipblaslt.a"],
 }
+
+HIP_OPTIONAL_LIBRARY_DIRS = [
+    ("rocblas", ["lib", "lib64"]),
+    ("rocblaslt", ["lib", "lib64"]),
+    ("hipblaslt", ["lib", "lib64"]),
+]
+
+HIP_BLOCK_SPARSE_SUPPORTED_ARCHES = {
+    "gfx90a",
+    "gfx940",
+    "gfx941",
+    "gfx942",
+    "gfx1200",
+    "gfx1201",
+}
+
+if USING_ROCM:
+    torch_cpp_extension.IS_HIP_EXTENSION = True
+    os.environ.setdefault("ROCM_HOME", ROCM_HOME)
+    os.environ.setdefault("ROCM_PATH", ROCM_HOME)
+    os.environ.setdefault("HIP_PATH", ROCM_HOME)
+    os.environ.setdefault("HIPSDK_PATH", ROCM_HOME)
+    os.environ.setdefault("HIP_SDK_PATH", ROCM_HOME)
+
+    HIP_INCLUDE_DIRS = [
+        os.path.join(ROCM_HOME, "include"),
+        os.path.join(ROCM_HOME, "hip", "include"),
+        os.path.join(ROCM_HOME, "llvm", "include"),
+    ]
+
+    HIP_LIBRARY_DIRS = [
+        os.path.join(ROCM_HOME, "lib"),
+        os.path.join(ROCM_HOME, "lib64"),
+        os.path.join(ROCM_HOME, "hip", "lib"),
+        os.path.join(ROCM_HOME, "hip", "lib64"),
+    ]
+
+    for subdir, candidates in HIP_OPTIONAL_LIBRARY_DIRS:
+        for candidate in candidates:
+            HIP_LIBRARY_DIRS.append(os.path.join(ROCM_HOME, subdir, candidate))
+
+    for extra_dir in os.environ.get("ROCM_EXTRA_LIB_DIRS", "").split(os.pathsep):
+        if extra_dir:
+            HIP_LIBRARY_DIRS.append(extra_dir)
+
+    HIP_BIN_DIRS = [
+        os.path.join(ROCM_HOME, "bin"),
+    ]
+
+    for extra_dir in os.environ.get("ROCM_EXTRA_BIN_DIRS", "").split(os.pathsep):
+        if extra_dir:
+            HIP_BIN_DIRS.append(extra_dir)
+
+    HIP_RUNTIME_DLLS = [
+        "amdhip64.dll",
+        "hiprtc.dll",
+        "hiprtc-builtins.dll",
+    ]
 
 
 def hip_library_exists(search_dirs: list[str], patterns: list[str]) -> bool:
@@ -303,6 +390,9 @@ def cuda_device_flags(debug_enabled: bool, sm_targets: list[str], block_sparse_e
 
 
 def hip_device_flags(debug_enabled: bool, hip_arches: list[str], block_sparse_enabled: bool) -> list[str]:
+    if not hip_arches:
+        hip_arches = detect_hip_arches()
+
     flags = [
         "-DENABLE_BF16=1",
         "-DBUILD_NUNCHAKU=1",
@@ -364,6 +454,7 @@ if __name__ == "__main__":
     hip_arches: list[str] = []
     sm_targets: list[str] = []
     block_sparse_available = False
+    hip_optional_libraries_found: dict[str, bool] = {}
 
     if USING_ROCM:
         hip_includes = [path for path in HIP_INCLUDE_DIRS if os.path.isdir(path)]
@@ -372,7 +463,9 @@ if __name__ == "__main__":
         library_dirs.extend(hip_libs)
         libraries.extend(HIP_LIBRARIES)
         for lib_name, patterns in HIP_OPTIONAL_LIBRARIES.items():
-            if hip_library_exists(hip_libs, patterns):
+            found = hip_library_exists(hip_libs, patterns)
+            hip_optional_libraries_found[lib_name] = found
+            if found:
                 libraries.append(lib_name)
 
     ExtensionImpl = HIPExtension if USING_ROCM else CUDAExtension
@@ -381,6 +474,16 @@ if __name__ == "__main__":
         hip_arches = detect_hip_arches()
         print(f"[nunchaku] Detected HIP targets: {hip_arches}", file=sys.stderr)
         block_sparse_available = detect_block_sparse_support([], hip_arches, True)
+        if block_sparse_available:
+            required_optional_libs = {"rocblaslt", "hipblaslt"}
+            missing_optional = [lib for lib in required_optional_libs if not hip_optional_libraries_found.get(lib, False)]
+            if missing_optional:
+                block_sparse_available = False
+                print(
+                    "[nunchaku] Disabling block-sparse attention on ROCm: missing optional libraries "
+                    + ", ".join(sorted(missing_optional)),
+                    file=sys.stderr,
+                )
         device_flags = hip_device_flags(debug_mode, hip_arches, block_sparse_available)
         sm_targets = []
     else:
